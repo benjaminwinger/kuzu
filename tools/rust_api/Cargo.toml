@@ -1,0 +1,20 @@
+[package]
+name = "kuzu"
+version = "0.1.0"
+edition = "2018"
+links = "kuzu"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cxx = "1.0"
+num-derive = "0.3"
+num-traits = "0.2"
+
+[build-dependencies]
+cxx-build = "1.0"
+cmake = "0.1"
+
+[dev-dependencies]
+tempdir = "0.3"
+anyhow = "1"
