@@ -1,6 +1,4 @@
-if(NOT WIN32)
-    add_subdirectory(shell)
-endif()
+add_subdirectory(shell)
 add_subdirectory(python_api)
 if(${BUILD_BENCHMARK})
     add_subdirectory(benchmark)
