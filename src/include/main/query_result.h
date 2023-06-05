@@ -73,7 +73,7 @@ public:
     /**
      * @return whether there are more tuples to read.
      */
-    KUZU_API bool hasNext();
+    KUZU_API bool hasNext() const;
     /**
      * @return next flat tuple in the query result.
      */
@@ -101,7 +101,7 @@ private:
         const std::vector<std::shared_ptr<binder::Expression>>& columns,
         const std::vector<std::vector<std::shared_ptr<binder::Expression>>>&
             expressionToCollectPerColumn);
-    void validateQuerySucceed();
+    void validateQuerySucceed() const;
 
 private:
     // execution status

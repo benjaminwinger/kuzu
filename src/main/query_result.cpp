@@ -183,7 +183,7 @@ void QueryResult::initResultTableAndIterator(
     iterator = std::make_unique<FlatTupleIterator>(*factorizedTable, std::move(valuesToCollect));
 }
 
-bool QueryResult::hasNext() {
+bool QueryResult::hasNext() const {
     validateQuerySucceed();
     assert(querySummary->getIsExplain() == false);
     return iterator->hasNextFlatTuple();
@@ -281,7 +281,7 @@ void QueryResult::writeToCSV(
     file.close();
 }
 
-void QueryResult::validateQuerySucceed() {
+void QueryResult::validateQuerySucceed() const {
     if (!success) {
         throw Exception(errMsg);
     }
