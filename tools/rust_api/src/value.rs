@@ -1,5 +1,4 @@
 use crate::ffi::ffi;
-use cxx::UniquePtr;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use std::fmt;
@@ -94,6 +93,9 @@ pub struct InternalID {
     table: u64,
 }
 
+/// Data types supported by Kùzu
+///
+/// Also see <https://kuzudb.com/docs/cypher/data-types/overview.html>
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Bool(bool),
@@ -105,12 +107,19 @@ pub enum Value {
     /// The number of days since 1970-01-01
     /// TODO: best way to store for integration with time and chrono. Maybe features for each and
     /// then just use them directly?
+    /// <https://kuzudb.com/docs/cypher/data-types/date.html>
     Date(i32),
+    /// <https://kuzudb.com/docs/cypher/data-types/interval.html>
+    Interval(std::time::Duration),
     /// Stored internally as the number of microseconds since 1970-01-01
     /// Nanosecond precision of SystemTime (if available) will not be preserved when used.
+    ///
+    /// <https://kuzudb.com/docs/cypher/data-types/timestamp.html>
     Timestamp(std::time::SystemTime),
     InternalID(InternalID),
+    /// <https://kuzudb.com/docs/cypher/data-types/string.html>
     String(String),
+    /// <https://kuzudb.com/docs/cypher/data-types/list.html>
     Nested(Box<Vec<Value>>),
     Node(Box<NodeValue>),
     Rel(Box<RelValue>),

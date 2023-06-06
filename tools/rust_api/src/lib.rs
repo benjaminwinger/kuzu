@@ -34,7 +34,7 @@ mod ffi;
 mod query_result;
 mod value;
 
-pub use connection::Connection;
+pub use connection::{Connection, PreparedStatement};
 pub use database::{Database, LoggingLevel};
 pub use error::Error;
 pub use query_result::QueryResult;

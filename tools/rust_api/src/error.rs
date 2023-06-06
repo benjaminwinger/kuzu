@@ -1,8 +1,9 @@
 use std::fmt;
 
-#[derive(Debug)]
 pub enum Error {
+    /// Exception raised by C++ kuzu library
     CxxException(cxx::Exception),
+    /// Message produced by kuzu when a query fails
     FailedQuery(String),
 }
 
@@ -16,12 +17,18 @@ impl std::fmt::Display for Error {
     }
 }
 
+impl std::fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self}")
+    }
+}
+
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         use Error::*;
         match self {
             CxxException(cxx) => Some(cxx),
-            FailedQuery(message) => None,
+            FailedQuery(_) => None,
         }
     }
 }

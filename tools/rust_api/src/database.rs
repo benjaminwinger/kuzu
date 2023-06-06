@@ -10,12 +10,17 @@ pub struct Database {
 }
 
 pub enum LoggingLevel {
-    Info,
     Debug,
+    Info,
     Error,
 }
 
 impl Database {
+    /// Creates a database object
+    ///
+    /// # Arguments:
+    /// * `path`: Path of the database. If the database does not already exist, it will be created.
+    /// * `buffer_pool_size`: Max size of the buffer pool in bytes
     pub fn new<P: AsRef<Path>>(path: P, buffer_pool_size: u64) -> Result<Self, Error> {
         let_cxx_string!(path = path.as_ref().display().to_string());
         Ok(Database {
@@ -23,6 +28,10 @@ impl Database {
         })
     }
 
+    /// Sets the logging level of the database instance
+    ///
+    /// # Arguments
+    /// * `logging_level`: New logging level.
     pub fn set_logging_level(&mut self, logging_level: LoggingLevel) {
         let_cxx_string!(
             level = match logging_level {

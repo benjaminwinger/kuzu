@@ -3,6 +3,7 @@ use crate::value::Value;
 use cxx::UniquePtr;
 use std::fmt;
 
+/// Stores the result of a query execution
 pub struct QueryResult {
     pub(crate) result: UniquePtr<ffi::QueryResult>,
 }

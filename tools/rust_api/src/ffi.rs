@@ -1,5 +1,3 @@
-use cxx::{let_cxx_string, SharedPtr, UniquePtr};
-
 #[cxx::bridge]
 pub(crate) mod ffi {
     #[namespace = "kuzu_rs"]
