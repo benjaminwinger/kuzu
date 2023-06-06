@@ -1,7 +1,8 @@
 use crate::ffi::ffi;
-use crate::value::Value;
+use crate::value::{Value, ConversionError};
 use cxx::UniquePtr;
 use std::fmt;
+use std::convert::TryInto;
 
 /// Stores the result of a query execution
 pub struct QueryResult {
@@ -34,7 +35,12 @@ impl Iterator for QueryResult {
             let mut result = vec![];
             for i in 0..ffi::flat_tuple_len(flat_tuple.as_ref().unwrap()) {
                 let value = ffi::flat_tuple_get_value(flat_tuple.as_ref().unwrap(), i);
-                result.push(value.into());
+                // TODO: Return result instead of unwrapping? 
+                // Unfortunately, as an iterator, this would require producing
+                // Vec<Result<Value>>, though it would be possible to turn that into
+                // Result<Vec<Value>> instead, but it would lose information when multiple failures
+                // occur.
+                result.push(value.try_into().unwrap());
             }
             Some(result)
         } else {

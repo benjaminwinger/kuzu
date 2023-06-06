@@ -3,6 +3,7 @@
 using kuzu::main::Connection;
 using kuzu::main::Database;
 using kuzu::main::SystemConfig;
+using kuzu::common::Interval;
 
 namespace kuzu_rs {
 
@@ -117,6 +118,23 @@ double value_get_double(const kuzu::common::Value& value) {
 }
 rust::String value_get_string(const kuzu::common::Value& value) {
     return rust::String(value.getValue<std::string>());
+}
+int64_t value_get_interval_secs(const kuzu::common::Value& value) {
+    auto interval = value.getValue<kuzu::common::interval_t>();
+    int64_t secs = (interval.months * Interval::DAYS_PER_MONTH + interval.days)
+        * Interval::HOURS_PER_DAY * Interval::MINS_PER_HOUR * Interval::SECS_PER_MINUTE 
+        // Include extra microseconds with the seconds
+         + interval.micros / Interval::MICROS_PER_SEC;
+}
+int32_t value_get_interval_micros(const kuzu::common::Value& value) {
+    auto interval = value.getValue<kuzu::common::interval_t>();
+    return interval.micros % Interval::MICROS_PER_SEC;
+}
+int32_t value_get_date_days(const kuzu::common::Value& value) {
+    return value.getValue<kuzu::common::date_t>().days;
+}
+int64_t value_get_timestamp_micros(const kuzu::common::Value& value) {
+    return value.getValue<kuzu::common::timestamp_t>().value;
 }
 uint8_t value_get_data_type_id(const kuzu::common::Value& value) {
     auto typ = value.getDataType();

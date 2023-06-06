@@ -76,6 +76,10 @@ pub(crate) mod ffi {
         fn value_get_float(value: &Value) -> f32;
         fn value_get_double(value: &Value) -> f64;
         fn value_get_string(value: &Value) -> String;
+        fn value_get_interval_secs(value: &Value) -> i64;
+        fn value_get_interval_micros(value: &Value) -> i32;
+        fn value_get_timestamp_micros(value: &Value) -> i64;
+        fn value_get_date_days(value: &Value) -> i32;
         fn value_get_data_type_id(value: &Value) -> u8;
     }
 }

@@ -10,6 +10,7 @@ links = "kuzu"
 cxx = "1.0"
 num-derive = "0.3"
 num-traits = "0.2"
+time = "0.3"
 
 [build-dependencies]
 cxx-build = "1.0"

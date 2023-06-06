@@ -55,6 +55,10 @@ int64_t value_get_int64(const kuzu::common::Value& value);
 float value_get_float(const kuzu::common::Value& value);
 double value_get_double(const kuzu::common::Value& value);
 rust::String value_get_string(const kuzu::common::Value& value);
+int64_t value_get_interval_secs(const kuzu::common::Value& value);
+int32_t value_get_interval_micros(const kuzu::common::Value& value);
+int32_t value_get_date_days(const kuzu::common::Value& value);
+int64_t value_get_timestamp_micros(const kuzu::common::Value& value);
 uint8_t value_get_data_type_id(const kuzu::common::Value& value);
 
 } // namespace kuzu_rs
