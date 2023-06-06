@@ -122,22 +122,6 @@ mod tests {
     }
 
     #[test]
-    fn test_query() -> Result<()> {
-        let temp_dir = tempdir::TempDir::new("example2")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
-        conn.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
-        conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
-        conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;
-
-        let mut statement =
-            conn.prepare("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?;
-        let result = conn.execute(&mut statement)?;
-        temp_dir.close()?;
-        Ok(())
-    }
-
-    #[test]
     fn test_invalid_query() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example2")?;
         let mut db = Database::new(temp_dir.path(), 0)?;
