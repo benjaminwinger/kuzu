@@ -1,5 +1,14 @@
 #[cxx::bridge]
 pub(crate) mod ffi {
+    #[namespace = "kuzu::main"]
+    unsafe extern "C++" {
+        type PreparedStatement;
+        fn isSuccess(&self) -> bool;
+
+        #[namespace = "kuzu_rs"]
+        fn prepared_statement_error_message(statement: &PreparedStatement) -> String;
+    }
+
     #[namespace = "kuzu_rs"]
     unsafe extern "C++" {
         include!("kuzu/include/kuzu_rs.h");
@@ -8,8 +17,6 @@ pub(crate) mod ffi {
         type Database;
         #[namespace = "kuzu::main"]
         type Connection;
-        #[namespace = "kuzu::main"]
-        type PreparedStatement;
         #[namespace = "kuzu::main"]
         type QueryResult;
         #[namespace = "kuzu::processor"]

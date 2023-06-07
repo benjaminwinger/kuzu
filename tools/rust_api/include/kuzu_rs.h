@@ -36,6 +36,8 @@ void connection_commit(kuzu::main::Connection& connection);
 void connection_rollback(kuzu::main::Connection& connection);
 void connection_interrupt(kuzu::main::Connection& connection);
 
+rust::String prepared_statement_error_message(const kuzu::main::PreparedStatement& statement);
+
 rust::String query_result_to_string(kuzu::main::QueryResult& result);
 bool query_result_is_success(const kuzu::main::QueryResult& result);
 rust::String query_result_get_error_message(const kuzu::main::QueryResult& result);

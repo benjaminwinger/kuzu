@@ -5,6 +5,8 @@ pub enum Error {
     CxxException(cxx::Exception),
     /// Message produced by kuzu when a query fails
     FailedQuery(String),
+    /// Message produced by kuzu when a query fails to prepare
+    FailedPreparedStatement(String),
 }
 
 impl std::fmt::Display for Error {
@@ -13,6 +15,7 @@ impl std::fmt::Display for Error {
         match self {
             CxxException(cxx) => write!(f, "{cxx}"),
             FailedQuery(message) => write!(f, "Query execution failed: {message}"),
+            FailedPreparedStatement(message) => write!(f, "Query execution failed: {message}"),
         }
     }
 }
@@ -29,6 +32,7 @@ impl std::error::Error for Error {
         match self {
             CxxException(cxx) => Some(cxx),
             FailedQuery(_) => None,
+            FailedPreparedStatement(_) => None,
         }
     }
 }

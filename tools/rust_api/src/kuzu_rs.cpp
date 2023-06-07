@@ -64,6 +64,10 @@ void connection_interrupt(kuzu::main::Connection& connection) {
     connection.interrupt();
 }
 
+rust::String prepared_statement_error_message(const kuzu::main::PreparedStatement& statement) {
+    return rust::String(statement.getErrorMessage());
+}
+
 rust::String query_result_to_string(kuzu::main::QueryResult& result) {
     return rust::String(result.toString());
 }

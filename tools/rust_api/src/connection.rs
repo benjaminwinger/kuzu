@@ -111,9 +111,14 @@ impl Connection {
     ///            See <https://kuzudb.com/docs/cypher> for details on the query format
     pub fn prepare(&mut self, query: &str) -> Result<PreparedStatement, Error> {
         let_cxx_string!(query = query);
-        Ok(PreparedStatement {
-            statement: ffi::connection_prepare(self.conn.pin_mut(), &query)?,
-        })
+        let statement = ffi::connection_prepare(self.conn.pin_mut(), &query)?;
+        if statement.isSuccess() {
+            Ok(PreparedStatement { statement })
+        } else {
+            Err(Error::FailedPreparedStatement(
+                ffi::prepared_statement_error_message(&statement),
+            ))
+        }
     }
 
     /// Executes the given query and returns the result.
