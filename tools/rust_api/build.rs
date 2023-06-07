@@ -18,8 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     command
         .args(&[target, format!("NUM_THREADS={}", num_cpus::get())])
         .current_dir(kuzu_root);
-    let make_status = command
-        .status()?;
+    let make_status = command.status()?;
     assert!(make_status.success());
 
     let kuzu_lib_path = kuzu_cmake_root.join("src");
@@ -36,10 +35,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let lib_path = kuzu_cmake_root
             .join(format!("third_party/{dir}"))
             .canonicalize()
-            .expect(&format!(
-                "Could not find {}/third_party/{dir}",
-                kuzu_cmake_root.display()
-            ));
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Could not find {}/third_party/{dir}",
+                    kuzu_cmake_root.display()
+                )
+            });
         println!("cargo:rustc-link-search=native={}", lib_path.display());
     }
 

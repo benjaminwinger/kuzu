@@ -6,6 +6,7 @@ use std::fmt;
 
 // From types.h
 #[allow(non_camel_case_types)]
+#[allow(clippy::upper_case_acronyms)]
 #[derive(FromPrimitive)]
 enum LogicalTypeID {
     ANY = 0,
@@ -216,16 +217,15 @@ impl TryFrom<&ffi::Value> for Value {
             ))),
             Some(DATE) => {
                 let days = ffi::value_get_date_days(value);
-                time::Date::from_calendar_date(1970, time::Month::January, 01)
+                time::Date::from_calendar_date(1970, time::Month::January, 1)
                     .unwrap()
                     .checked_add(time::Duration::days(days as i64))
                     .map(Value::Date)
                     .ok_or(ConversionError::Date(days))
             }
-            Some(Timestamp) => {
+            Some(TIMESTAMP) => {
                 let us = ffi::value_get_timestamp_micros(value);
                 time::OffsetDateTime::UNIX_EPOCH
-                    .clone()
                     .checked_add(time::Duration::microseconds(us))
                     .map(Value::Timestamp)
                     .ok_or(ConversionError::Timestamp(us))
