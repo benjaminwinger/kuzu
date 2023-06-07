@@ -58,14 +58,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if link_mode() == "static" {
         println!("cargo:rustc-link-lib=dylib=stdc++");
 
+        println!("cargo:rustc-link-lib=static=arrow_bundled_dependencies");
+        // Dependencies of arrow's bundled dependencies
+        println!("cargo:rustc-link-lib=dylib=ssl");
+        println!("cargo:rustc-link-lib=dylib=crypto");
+
+        println!("cargo:rustc-link-lib=static=parquet");
+        println!("cargo:rustc-link-lib=static=arrow");
+
         println!("cargo:rustc-link-lib=static=utf8proc");
         println!("cargo:rustc-link-lib=static=antlr4_cypher");
         println!("cargo:rustc-link-lib=static=antlr4_runtime");
         println!("cargo:rustc-link-lib=static=re2");
-
-        println!("cargo:rustc-link-lib=static=arrow_bundled_dependencies");
-        println!("cargo:rustc-link-lib=static=parquet");
-        println!("cargo:rustc-link-lib=static=arrow");
     }
     println!("cargo:rerun-if-env-changed=KUZU_SHARED");
 
