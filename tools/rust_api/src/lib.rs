@@ -23,7 +23,7 @@
 //!
 //! ## Safety
 //!
-//! Generally, access to kuzu data structures is thread-safe, however creating or accessing multiple databases
+//! Generally, access to kuzu data structures is thread-safe, however creating multiple databases
 //! concurrently is not safe. If you need to access multiple databases you will need to do so in
 //! separate processes.
 

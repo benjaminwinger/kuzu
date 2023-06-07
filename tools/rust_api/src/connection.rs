@@ -8,10 +8,6 @@ pub struct PreparedStatement {
     statement: UniquePtr<ffi::PreparedStatement>,
 }
 
-pub struct Connection {
-    conn: UniquePtr<ffi::Connection>,
-}
-
 /// Connections are used to interact with a Database instance.
 ///
 /// Each connection is thread-safe, and multiple connections can connect to the same Database
@@ -80,6 +76,10 @@ pub struct Connection {
 /// # Ok(())
 /// # }
 /// ```
+pub struct Connection {
+    conn: UniquePtr<ffi::Connection>,
+}
+
 impl Connection {
     /// Creates a connection to the database.
     ///
