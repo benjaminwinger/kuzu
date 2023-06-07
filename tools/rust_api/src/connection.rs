@@ -2,6 +2,7 @@ use crate::database::Database;
 use crate::error::Error;
 use crate::ffi::ffi;
 use crate::query_result::QueryResult;
+use crate::value::Value;
 use cxx::{let_cxx_string, UniquePtr};
 
 pub struct PreparedStatement {
@@ -128,7 +129,7 @@ impl Connection {
     ///            See <https://kuzudb.com/docs/cypher> for details on the query format
     pub fn query(&mut self, query: &str) -> Result<QueryResult, Error> {
         let mut statement = self.prepare(query)?;
-        self.execute(&mut statement)
+        self.execute(&mut statement, &[])
     }
 
     /// Executes the given prepared statement with args and returns the result.
@@ -137,23 +138,29 @@ impl Connection {
     /// * `prepared_statement`: The prepared statement to execute
     pub fn execute(
         &mut self,
-        // TODO: C++ API takes a mutable pointer
-        // Maybe consume it instead? Is there a benefit to keeping the statement?
         prepared_statement: &mut PreparedStatement,
-        //params: std::collections::HashMap<String, Value>,
+        params: &[(&str, Value)],
     ) -> Result<QueryResult, Error> {
-        /*
-        let keys = vec![];
-        let values = vec![];
-        for (key, value) in params.drain() {
-            keys.push(key);
-            values.push(value);
-        }*/
+        // Passing and converting Values in a collection across the ffi boundary is difficult
+        // (std::vector cannot be constructed from rust, Vec cannot contain opaque C++ types)
+        // So we create an opaque parameter pack and copy the parameters into it one by one
+        let mut cxx_params = ffi::new_params();
+        for (key, value) in params {
+            match value {
+                Value::Bool(value) => cxx_params.pin_mut().insert_bool(key, *value),
+                Value::Int16(value) => cxx_params.pin_mut().insert_i16(key, *value),
+                Value::Int32(value) => cxx_params.pin_mut().insert_i32(key, *value),
+                Value::Int64(value) => cxx_params.pin_mut().insert_i64(key, *value),
+                Value::Float(value) => cxx_params.pin_mut().insert_float(key, *value),
+                Value::Double(value) => cxx_params.pin_mut().insert_double(key, *value),
+                Value::String(value) => cxx_params.pin_mut().insert_string(key, value),
+                _ => unimplemented!(),
+            }
+        }
         let result = ffi::connection_execute(
             self.conn.pin_mut(),
             prepared_statement.statement.pin_mut(),
-            /*keys,
-            values,*/
+            cxx_params,
         )?;
         if !result.isSuccess() {
             Err(Error::FailedQuery(ffi::query_result_get_error_message(
@@ -252,13 +259,51 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
         conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
         conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
 
-        let mut statement =
-            conn.prepare("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?;
-        for result in conn.execute(&mut statement)? {
+        for result in conn.query("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")? {
             assert_eq!(result.len(), 2);
             assert_eq!(result[0], Value::String("Alice".to_string()));
             assert_eq!(result[1], Value::Int16(25));
         }
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_params() -> Result<()> {
+        let temp_dir = tempdir::TempDir::new("example3")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+        let mut conn = Connection::new(&mut db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
+        conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
+        conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;
+
+        let mut statement = conn.prepare("MATCH (a:Person) WHERE a.age = $age RETURN a.name;")?;
+        for result in conn.execute(&mut statement, &[("age", Value::Int16(25))])? {
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0], Value::String("Alice".to_string()));
+        }
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_params_invalid_type() -> Result<()> {
+        let temp_dir = tempdir::TempDir::new("example3")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+        let mut conn = Connection::new(&mut db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
+        conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
+        conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;
+
+        let mut statement = conn.prepare("MATCH (a:Person) WHERE a.age = $age RETURN a.name;")?;
+        let result: Error = conn
+            .execute(&mut statement, &[("age", Value::String("25".to_string()))])
+            .expect_err("Age should be an int16!")
+            .into();
+        assert_eq!(
+            result.to_string(),
+            "Query execution failed: Parameter age has data type STRING but expects INT16."
+        );
         temp_dir.close()?;
         Ok(())
     }

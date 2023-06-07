@@ -7,6 +7,10 @@ using kuzu::main::SystemConfig;
 
 namespace kuzu_rs {
 
+std::unique_ptr<QueryParams> new_params() {
+    return std::make_unique<QueryParams>();
+}
+
 std::unique_ptr<Database> new_database(
     const std::string& databasePath, const long unsigned int bufferPoolSize) {
     auto systemConfig = SystemConfig();
@@ -24,14 +28,9 @@ std::unique_ptr<kuzu::main::Connection> database_connect(kuzu::main::Database& d
     return std::make_unique<Connection>(&database);
 }
 
-std::unique_ptr<kuzu::main::QueryResult> connection_execute(kuzu::main::Connection& connection, kuzu::main::PreparedStatement&
-                                                                                                    query /*, const rust::Vec<rust::String> &paramKeys, const rust::Vec<kuzu::common::Value> &paramValues*/) {
-    std::unordered_map<std::string, std::shared_ptr<kuzu::common::Value>> params;
-    /*
-    for (auto i = 0u; i < paramKeys.size(); i++) {
-        params[paramKeys[i]()] = std::make_shared<kuzu::common::Value>(paramValues[i]);
-    }*/
-    return connection.executeWithParams(&query, params);
+std::unique_ptr<kuzu::main::QueryResult> connection_execute(kuzu::main::Connection& connection,
+    kuzu::main::PreparedStatement& query, std::unique_ptr<QueryParams> params) {
+    return connection.executeWithParams(&query, params->inputParams);
 }
 
 rust::String prepared_statement_error_message(const kuzu::main::PreparedStatement& statement) {

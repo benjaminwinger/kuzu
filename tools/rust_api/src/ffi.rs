@@ -46,6 +46,31 @@ pub(crate) mod ffi {
         fn prepared_statement_error_message(statement: &PreparedStatement) -> String;
     }
 
+    #[namespace = "kuzu_rs"]
+    unsafe extern "C++" {
+        type QueryParams;
+
+        // Simple types which cross the ffi without problems
+        // Non-copyable types are references so that they only need to be cloned on the
+        // C++ side of things
+        #[rust_name = "insert_bool"]
+        fn insert(self: Pin<&mut Self>, key: &str, value: bool);
+        #[rust_name = "insert_i16"]
+        fn insert(self: Pin<&mut Self>, key: &str, value: i16);
+        #[rust_name = "insert_i32"]
+        fn insert(self: Pin<&mut Self>, key: &str, value: i32);
+        #[rust_name = "insert_i64"]
+        fn insert(self: Pin<&mut Self>, key: &str, value: i64);
+        #[rust_name = "insert_float"]
+        fn insert(self: Pin<&mut Self>, key: &str, value: f32);
+        #[rust_name = "insert_double"]
+        fn insert(self: Pin<&mut Self>, key: &str, value: f64);
+
+        fn insert_string(self: Pin<&mut Self>, key: &str, value: &String);
+
+        fn new_params() -> UniquePtr<QueryParams>;
+    }
+
     #[namespace = "kuzu::main"]
     unsafe extern "C++" {
         type Database;
@@ -76,12 +101,7 @@ pub(crate) mod ffi {
         fn connection_execute(
             connection: Pin<&mut Connection>,
             query: Pin<&mut PreparedStatement>,
-            /*
-             TODO: Will need to just implement a value constructor for each C++ value,
-             convert them on the Rust side, and pass a Vec<UniquePtr<Value>> to C++ for the values.
-            param_args: &Vec<String>,
-            param_values: &Vec<Value>,
-            */
+            params: UniquePtr<QueryParams>,
         ) -> Result<UniquePtr<QueryResult>>;
 
         fn getMaxNumThreadForExec(self: Pin<&mut Connection>) -> u64;
