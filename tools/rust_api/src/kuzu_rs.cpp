@@ -1,9 +1,9 @@
 #include "kuzu_rs.h"
 
+using kuzu::common::Interval;
 using kuzu::main::Connection;
 using kuzu::main::Database;
 using kuzu::main::SystemConfig;
-using kuzu::common::Interval;
 
 namespace kuzu_rs {
 
@@ -121,10 +121,10 @@ rust::String value_get_string(const kuzu::common::Value& value) {
 }
 int64_t value_get_interval_secs(const kuzu::common::Value& value) {
     auto interval = value.getValue<kuzu::common::interval_t>();
-    int64_t secs = (interval.months * Interval::DAYS_PER_MONTH + interval.days)
-        * Interval::HOURS_PER_DAY * Interval::MINS_PER_HOUR * Interval::SECS_PER_MINUTE 
-        // Include extra microseconds with the seconds
-         + interval.micros / Interval::MICROS_PER_SEC;
+    return (interval.months * Interval::DAYS_PER_MONTH + interval.days) * Interval::HOURS_PER_DAY *
+               Interval::MINS_PER_HOUR * Interval::SECS_PER_MINUTE
+           // Include extra microseconds with the seconds
+           + interval.micros / Interval::MICROS_PER_SEC;
 }
 int32_t value_get_interval_micros(const kuzu::common::Value& value) {
     auto interval = value.getValue<kuzu::common::interval_t>();
