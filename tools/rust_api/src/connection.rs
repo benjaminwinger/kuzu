@@ -96,12 +96,12 @@ impl Connection {
     /// # Arguments
     /// * `num_threads`: The maximum number of threads to use for execution in the current connection
     pub fn set_max_num_threads_for_exec(&mut self, num_threads: u64) {
-        ffi::connection_set_max_num_threads_for_exec(self.conn.pin_mut(), num_threads);
+        self.conn.pin_mut().setMaxNumThreadForExec(num_threads);
     }
 
     /// Returns the maximum number of threads used for execution in the current connection
     pub fn get_max_num_threads_for_exec(&mut self) -> u64 {
-        ffi::connection_get_max_num_threads_for_exec(self.conn.pin_mut())
+        self.conn.pin_mut().getMaxNumThreadForExec()
     }
 
     /// Prepares the given query and returns the prepared statement.
@@ -111,7 +111,7 @@ impl Connection {
     ///            See <https://kuzudb.com/docs/cypher> for details on the query format
     pub fn prepare(&mut self, query: &str) -> Result<PreparedStatement, Error> {
         let_cxx_string!(query = query);
-        let statement = ffi::connection_prepare(self.conn.pin_mut(), &query)?;
+        let statement = self.conn.pin_mut().prepare(&query)?;
         if statement.isSuccess() {
             Ok(PreparedStatement { statement })
         } else {
@@ -155,7 +155,7 @@ impl Connection {
             /*keys,
             values,*/
         )?;
-        if !ffi::query_result_is_success(&result) {
+        if !result.isSuccess() {
             Err(Error::FailedQuery(ffi::query_result_get_error_message(
                 &result,
             )))
@@ -166,31 +166,27 @@ impl Connection {
 
     /// Manually starts a new read-only transaction in the current connection
     pub fn begin_read_only_transaction(&mut self) -> Result<(), Error> {
-        Ok(ffi::connection_begin_read_only_transaction(
-            self.conn.pin_mut(),
-        )?)
+        Ok(self.conn.pin_mut().beginReadOnlyTransaction()?)
     }
 
     /// Manually starts a new write transaction in the current connection
     pub fn begin_write_transaction(&mut self) -> Result<(), Error> {
-        Ok(ffi::connection_begin_write_transaction(
-            self.conn.pin_mut(),
-        )?)
+        Ok(self.conn.pin_mut().beginWriteTransaction()?)
     }
 
     /// Manually commits the current transaction
     pub fn commit(&mut self) -> Result<(), Error> {
-        Ok(ffi::connection_commit(self.conn.pin_mut())?)
+        Ok(self.conn.pin_mut().commit()?)
     }
 
     /// Manually rolls back the current transaction
     pub fn rollback(&mut self) -> Result<(), Error> {
-        Ok(ffi::connection_rollback(self.conn.pin_mut())?)
+        Ok(self.conn.pin_mut().rollback()?)
     }
 
-    /// Interrupts all queries currenttly executing within this connection
+    /// Interrupts all queries currently executing within this connection
     pub fn interrupt(&mut self) -> Result<(), Error> {
-        Ok(ffi::connection_interrupt(self.conn.pin_mut())?)
+        Ok(self.conn.pin_mut().interrupt()?)
     }
 
     /* TODO (bmwinger)
@@ -253,7 +249,7 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
         let temp_dir = tempdir::TempDir::new("example3")?;
         let mut db = Database::new(temp_dir.path(), 0)?;
         let mut conn = Connection::new(&mut db)?;
-        conn.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
         conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
 
         let mut statement =
@@ -261,7 +257,7 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
         for result in conn.execute(&mut statement)? {
             assert_eq!(result.len(), 2);
             assert_eq!(result[0], Value::String("Alice".to_string()));
-            assert_eq!(result[1], Value::Int64(25));
+            assert_eq!(result[1], Value::Int16(25));
         }
         temp_dir.close()?;
         Ok(())

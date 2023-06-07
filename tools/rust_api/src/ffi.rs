@@ -1,7 +1,44 @@
 #[cxx::bridge]
 pub(crate) mod ffi {
+    // From types.h
+    #[namespace = "kuzu::common"]
+    enum LogicalTypeID {
+        ANY = 0,
+        NODE = 10,
+        REL = 11,
+        RECURSIVE_REL = 12,
+        // SERIAL is a special data type that is used to represent a sequence of INT64 values that are
+        // incremented by 1 starting from 0.
+        SERIAL = 13,
+
+        // fixed size types
+        BOOL = 22,
+        INT64 = 23,
+        INT32 = 24,
+        INT16 = 25,
+        DOUBLE = 26,
+        FLOAT = 27,
+        DATE = 28,
+        TIMESTAMP = 29,
+        INTERVAL = 30,
+        FIXED_LIST = 31,
+
+        INTERNAL_ID = 40,
+
+        // variable size types
+        STRING = 50,
+        VAR_LIST = 52,
+        STRUCT = 53,
+    }
+    #[namespace = "kuzu::common"]
+    unsafe extern "C++" {
+        type LogicalTypeID;
+    }
+
     #[namespace = "kuzu::main"]
     unsafe extern "C++" {
+        include!("kuzu/include/kuzu_rs.h");
+
         type PreparedStatement;
         fn isSuccess(&self) -> bool;
 
@@ -9,40 +46,33 @@ pub(crate) mod ffi {
         fn prepared_statement_error_message(statement: &PreparedStatement) -> String;
     }
 
-    #[namespace = "kuzu_rs"]
+    #[namespace = "kuzu::main"]
     unsafe extern "C++" {
-        include!("kuzu/include/kuzu_rs.h");
-
-        #[namespace = "kuzu::main"]
         type Database;
-        #[namespace = "kuzu::main"]
-        type Connection;
-        #[namespace = "kuzu::main"]
-        type QueryResult;
-        #[namespace = "kuzu::processor"]
-        type FlatTuple;
 
-        #[namespace = "kuzu::common"]
-        type Value;
-        #[namespace = "kuzu::common"]
-        type NodeVal;
-        #[namespace = "kuzu::common"]
-        type internalID_t;
-
+        #[namespace = "kuzu_rs"]
         fn new_database(
             databasePath: &CxxString,
             bufferPoolSize: u64,
         ) -> Result<UniquePtr<Database>>;
 
+        #[namespace = "kuzu_rs"]
         fn database_set_logging_level(database: Pin<&mut Database>, level: &CxxString);
+    }
 
+    #[namespace = "kuzu::main"]
+    unsafe extern "C++" {
+        type Connection;
+
+        #[namespace = "kuzu_rs"]
         fn database_connect(database: Pin<&mut Database>) -> Result<UniquePtr<Connection>>;
 
-        fn connection_prepare(
-            connection: Pin<&mut Connection>,
+        fn prepare(
+            self: Pin<&mut Connection>,
             query: &CxxString,
         ) -> Result<UniquePtr<PreparedStatement>>;
 
+        #[namespace = "kuzu_rs"]
         fn connection_execute(
             connection: Pin<&mut Connection>,
             query: Pin<&mut PreparedStatement>,
@@ -54,39 +84,71 @@ pub(crate) mod ffi {
             */
         ) -> Result<UniquePtr<QueryResult>>;
 
-        fn connection_get_max_num_threads_for_exec(connection: Pin<&mut Connection>) -> u64;
-        fn connection_set_max_num_threads_for_exec(
-            connection: Pin<&mut Connection>,
-            num_threads: u64,
-        );
-        fn connection_begin_read_only_transaction(connection: Pin<&mut Connection>) -> Result<()>;
-        fn connection_begin_write_transaction(connection: Pin<&mut Connection>) -> Result<()>;
-        fn connection_commit(connection: Pin<&mut Connection>) -> Result<()>;
-        fn connection_rollback(connection: Pin<&mut Connection>) -> Result<()>;
-        fn connection_interrupt(connection: Pin<&mut Connection>) -> Result<()>;
+        fn getMaxNumThreadForExec(self: Pin<&mut Connection>) -> u64;
+        fn setMaxNumThreadForExec(self: Pin<&mut Connection>, num_threads: u64);
+        fn beginReadOnlyTransaction(self: Pin<&mut Connection>) -> Result<()>;
+        fn beginWriteTransaction(self: Pin<&mut Connection>) -> Result<()>;
+        fn commit(self: Pin<&mut Connection>) -> Result<()>;
+        fn rollback(self: Pin<&mut Connection>) -> Result<()>;
+        fn interrupt(self: Pin<&mut Connection>) -> Result<()>;
+    }
 
+    #[namespace = "kuzu::main"]
+    unsafe extern "C++" {
+        type QueryResult;
+
+        #[namespace = "kuzu_rs"]
         fn query_result_to_string(query_result: Pin<&mut QueryResult>) -> String;
-        fn query_result_is_success(query_result: &QueryResult) -> bool;
+        fn isSuccess(&self) -> bool;
+        #[namespace = "kuzu_rs"]
         fn query_result_get_error_message(query_result: &QueryResult) -> String;
-        fn query_result_has_next(result: &QueryResult) -> bool;
-        fn query_result_get_next(result: Pin<&mut QueryResult>) -> SharedPtr<FlatTuple>;
+        fn hasNext(&self) -> bool;
+        fn getNext(self: Pin<&mut QueryResult>) -> SharedPtr<FlatTuple>;
+    }
 
-        fn node_value_to_string(node_value: &NodeVal) -> String;
+    #[namespace = "kuzu::processor"]
+    unsafe extern "C++" {
+        type FlatTuple;
+
+        fn len(&self) -> u32;
+        #[namespace = "kuzu_rs"]
+        fn flat_tuple_get_value(tuple: &FlatTuple, index: u32) -> &Value;
+    }
+
+    #[namespace = "kuzu_rs"]
+    unsafe extern "C++" {
+        #[namespace = "kuzu::common"]
+        type Value;
+
         fn value_to_string(node_value: &Value) -> String;
 
-        fn flat_tuple_len(tuple: &FlatTuple) -> u32;
-        fn flat_tuple_get_value(tuple: &FlatTuple, index: u32) -> &Value;
-        fn value_get_bool(value: &Value) -> bool;
-        fn value_get_int16(value: &Value) -> i16;
-        fn value_get_int32(value: &Value) -> i32;
-        fn value_get_int64(value: &Value) -> i64;
-        fn value_get_float(value: &Value) -> f32;
-        fn value_get_double(value: &Value) -> f64;
+        #[rust_name = "get_value_bool"]
+        fn getValue(&self) -> bool;
+        #[rust_name = "get_value_i16"]
+        fn getValue(&self) -> i16;
+        #[rust_name = "get_value_i32"]
+        fn getValue(&self) -> i32;
+        #[rust_name = "get_value_i64"]
+        fn getValue(&self) -> i64;
+        #[rust_name = "get_value_float"]
+        fn getValue(&self) -> f32;
+        #[rust_name = "get_value_double"]
+        fn getValue(&self) -> f64;
+
         fn value_get_string(value: &Value) -> String;
         fn value_get_interval_secs(value: &Value) -> i64;
         fn value_get_interval_micros(value: &Value) -> i32;
         fn value_get_timestamp_micros(value: &Value) -> i64;
         fn value_get_date_days(value: &Value) -> i32;
-        fn value_get_data_type_id(value: &Value) -> u8;
+
+        fn value_get_data_type_id(value: &Value) -> LogicalTypeID;
+    }
+
+    unsafe extern "C++" {
+        #[namespace = "kuzu::common"]
+        type NodeVal;
+
+        #[namespace = "kuzu_rs"]
+        fn node_value_to_string(node_value: &NodeVal) -> String;
     }
 }

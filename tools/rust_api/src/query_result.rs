@@ -30,10 +30,10 @@ impl Iterator for QueryResult {
 
     // next() is the only required method
     fn next(&mut self) -> Option<Self::Item> {
-        if ffi::query_result_has_next(self.result.as_ref().unwrap()) {
-            let flat_tuple = ffi::query_result_get_next(self.result.pin_mut());
+        if self.result.as_ref().unwrap().hasNext() {
+            let flat_tuple = self.result.pin_mut().getNext();
             let mut result = vec![];
-            for i in 0..ffi::flat_tuple_len(flat_tuple.as_ref().unwrap()) {
+            for i in 0..flat_tuple.as_ref().unwrap().len() {
                 let value = ffi::flat_tuple_get_value(flat_tuple.as_ref().unwrap(), i);
                 // TODO: Return result instead of unwrapping?
                 // Unfortunately, as an iterator, this would require producing

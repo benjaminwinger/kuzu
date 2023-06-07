@@ -1,41 +1,6 @@
 use crate::ffi::ffi;
-use num_derive::FromPrimitive;
-use num_traits::FromPrimitive;
 use std::convert::TryFrom;
 use std::fmt;
-
-// From types.h
-#[allow(non_camel_case_types)]
-#[allow(clippy::upper_case_acronyms)]
-#[derive(FromPrimitive)]
-enum LogicalTypeID {
-    ANY = 0,
-    NODE = 10,
-    REL = 11,
-    RECURSIVE_REL = 12,
-    // SERIAL is a special data type that is used to represent a sequence of INT64 values that are
-    // incremented by 1 starting from 0.
-    SERIAL = 13,
-
-    // fixed size types
-    BOOL = 22,
-    INT64 = 23,
-    INT32 = 24,
-    INT16 = 25,
-    DOUBLE = 26,
-    FLOAT = 27,
-    DATE = 28,
-    TIMESTAMP = 29,
-    INTERVAL = 30,
-    FIXED_LIST = 31,
-
-    INTERNAL_ID = 40,
-
-    // variable size types
-    STRING = 50,
-    VAR_LIST = 52,
-    STRUCT = 53,
-}
 
 pub enum ConversionError {
     /// Kuzu's internal date as the number of days since 1970-01-01
@@ -201,21 +166,21 @@ impl TryFrom<&ffi::Value> for Value {
     type Error = ConversionError;
 
     fn try_from(value: &ffi::Value) -> Result<Self, Self::Error> {
-        use LogicalTypeID::*;
-        match FromPrimitive::from_u8(ffi::value_get_data_type_id(value)) {
-            Some(BOOL) => Ok(Value::Bool(ffi::value_get_bool(value))),
-            Some(INT16) => Ok(Value::Int16(ffi::value_get_int16(value))),
-            Some(INT32) => Ok(Value::Int32(ffi::value_get_int32(value))),
-            Some(INT64) => Ok(Value::Int64(ffi::value_get_int64(value))),
-            Some(FLOAT) => Ok(Value::Float(ffi::value_get_float(value))),
-            Some(DOUBLE) => Ok(Value::Double(ffi::value_get_double(value))),
-            Some(STRING) => Ok(Value::String(ffi::value_get_string(value))),
-            Some(INTERVAL) => Ok(Value::Interval(time::Duration::new(
+        use ffi::LogicalTypeID;
+        match ffi::value_get_data_type_id(value) {
+            LogicalTypeID::BOOL => Ok(Value::Bool(value.get_value_bool())),
+            LogicalTypeID::INT16 => Ok(Value::Int16(value.get_value_i16())),
+            LogicalTypeID::INT32 => Ok(Value::Int32(value.get_value_i32())),
+            LogicalTypeID::INT64 => Ok(Value::Int64(value.get_value_i64())),
+            LogicalTypeID::FLOAT => Ok(Value::Float(value.get_value_float())),
+            LogicalTypeID::DOUBLE => Ok(Value::Double(value.get_value_double())),
+            LogicalTypeID::STRING => Ok(Value::String(ffi::value_get_string(value))),
+            LogicalTypeID::INTERVAL => Ok(Value::Interval(time::Duration::new(
                 ffi::value_get_interval_secs(value),
                 // Duration is constructed using nanoseconds, but kuzu stores microseconds
                 ffi::value_get_interval_micros(value) * 1000,
             ))),
-            Some(DATE) => {
+            LogicalTypeID::DATE => {
                 let days = ffi::value_get_date_days(value);
                 time::Date::from_calendar_date(1970, time::Month::January, 1)
                     .unwrap()
@@ -223,16 +188,13 @@ impl TryFrom<&ffi::Value> for Value {
                     .map(Value::Date)
                     .ok_or(ConversionError::Date(days))
             }
-            Some(TIMESTAMP) => {
+            LogicalTypeID::TIMESTAMP => {
                 let us = ffi::value_get_timestamp_micros(value);
                 time::OffsetDateTime::UNIX_EPOCH
                     .checked_add(time::Duration::microseconds(us))
                     .map(Value::Timestamp)
                     .ok_or(ConversionError::Timestamp(us))
             }
-            // Maybe an "internal" error instead for better readability when new types are
-            // added on the C++ side.
-            None => unreachable!(),
             _ => unimplemented!(),
         }
     }
