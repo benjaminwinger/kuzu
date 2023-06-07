@@ -107,6 +107,10 @@ nodejstest: arrow
 	cd $(ROOT_DIR)/tools/nodejs_api/ && \
 	npm test
 
+rust-test:
+	cd $(ROOT_DIR)/tools/rust_api && \
+	cargo test -- --test-threads=1
+
 clean-python-api:
 ifeq ($(OS),Windows_NT)
 	if exist tools\python_api\build rmdir /s /q tools\python_api\build
