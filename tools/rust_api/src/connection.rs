@@ -77,16 +77,16 @@ pub struct PreparedStatement {
 /// # Ok(())
 /// # }
 /// ```
-pub struct Connection {
-    conn: UniquePtr<ffi::Connection>,
+pub struct Connection<'a> {
+    conn: UniquePtr<ffi::Connection<'a>>,
 }
 
-impl Connection {
+impl<'a> Connection<'a> {
     /// Creates a connection to the database.
     ///
     /// # Arguments
     /// * `database`: A reference to the database instance to which this connection will be connected.
-    pub fn new(database: &mut Database) -> Result<Self, Error> {
+    pub fn new(database: &'a mut Database) -> Result<Self, Error> {
         Ok(Connection {
             conn: ffi::database_connect(database.db.pin_mut())?,
         })

@@ -87,7 +87,9 @@ pub(crate) mod ffi {
 
     #[namespace = "kuzu::main"]
     unsafe extern "C++" {
-        type Connection;
+        // The C++ Connection class includes a pointer to the database.
+        // We must not destroy a referenced database while a connection is open.
+        type Connection<'a>;
 
         #[namespace = "kuzu_rs"]
         fn database_connect(database: Pin<&mut Database>) -> Result<UniquePtr<Connection>>;
