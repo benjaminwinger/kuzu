@@ -80,6 +80,19 @@ int32_t value_get_date_days(const kuzu::common::Value& value) {
 int64_t value_get_timestamp_micros(const kuzu::common::Value& value) {
     return value.getValue<kuzu::common::timestamp_t>().value;
 }
+std::array<uint64_t, 2> value_get_internal_id(const kuzu::common::Value& value) {
+    auto internalID = value.getValue<kuzu::common::internalID_t>();
+    return std::array{internalID.offset, internalID.tableID};
+}
+
+std::unique_ptr<ValueList> value_get_list(const kuzu::common::Value& value) {
+    return std::make_unique<ValueList>(value.getListValReference());
+}
+std::unique_ptr<std::vector<std::string>> value_get_struct_names(const kuzu::common::Value& value) {
+    auto datatype = value.getDataType();
+    return std::make_unique<std::vector<std::string>>(
+        kuzu::common::StructType::getFieldNames(&datatype));
+}
 kuzu::common::LogicalTypeID value_get_data_type_id(const kuzu::common::Value& value) {
     return value.getDataType().getLogicalTypeID();
 }

@@ -137,6 +137,14 @@ pub(crate) mod ffi {
 
     #[namespace = "kuzu_rs"]
     unsafe extern "C++" {
+        type ValueList<'a>;
+
+        fn size<'a>(&'a self) -> u64;
+        fn get<'a>(&'a self, index: u64) -> &'a UniquePtr<Value>;
+    }
+
+    #[namespace = "kuzu_rs"]
+    unsafe extern "C++" {
         #[namespace = "kuzu::common"]
         type Value;
 
@@ -160,6 +168,9 @@ pub(crate) mod ffi {
         fn value_get_interval_micros(value: &Value) -> i32;
         fn value_get_timestamp_micros(value: &Value) -> i64;
         fn value_get_date_days(value: &Value) -> i32;
+        fn value_get_internal_id(value: &Value) -> [u64; 2];
+        fn value_get_list<'a>(value: &'a Value) -> UniquePtr<ValueList<'a>>;
+        fn value_get_struct_names(value: &Value) -> UniquePtr<CxxVector<CxxString>>;
 
         fn value_get_data_type_id(value: &Value) -> LogicalTypeID;
     }

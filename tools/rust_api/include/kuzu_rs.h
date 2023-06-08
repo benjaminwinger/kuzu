@@ -27,6 +27,14 @@ struct QueryParams {
 
 std::unique_ptr<QueryParams> new_params();
 
+// Simple wrapper for vector of unique_ptr since cxx doesn't support functions returning a vector of
+// unique_ptr
+struct ValueList {
+    const std::vector<std::unique_ptr<kuzu::common::Value>>& values;
+    uint64_t size() const { return values.size(); }
+    const std::unique_ptr<kuzu::common::Value>& get(uint64_t index) const { return values[index]; }
+};
+
 /* Database */
 std::unique_ptr<kuzu::main::Database> new_database(
     const std::string& databasePath, const long unsigned int bufferPoolSize);
@@ -58,6 +66,9 @@ int64_t value_get_interval_secs(const kuzu::common::Value& value);
 int32_t value_get_interval_micros(const kuzu::common::Value& value);
 int32_t value_get_date_days(const kuzu::common::Value& value);
 int64_t value_get_timestamp_micros(const kuzu::common::Value& value);
+std::array<uint64_t, 2> value_get_internal_id(const kuzu::common::Value& value);
+std::unique_ptr<ValueList> value_get_list(const kuzu::common::Value& value);
+std::unique_ptr<std::vector<std::string>> value_get_struct_names(const kuzu::common::Value& value);
 kuzu::common::LogicalTypeID value_get_data_type_id(const kuzu::common::Value& value);
 rust::String value_to_string(const kuzu::common::Value& val);
 

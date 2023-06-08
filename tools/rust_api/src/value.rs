@@ -1,5 +1,6 @@
 use crate::ffi::ffi;
-use std::convert::TryFrom;
+use std::collections::HashMap;
+use std::convert::{TryFrom, TryInto};
 use std::fmt;
 
 pub enum ConversionError {
@@ -85,8 +86,8 @@ pub struct RelValue {}
 // FIXME: should this be entirely private? The C++ api at least defines operators
 #[derive(Clone, Debug, PartialEq)]
 pub struct InternalID {
-    offset: u64,
-    table: u64,
+    pub(crate) offset: u64,
+    pub(crate) table: u64,
 }
 
 /// Data types supported by Kùzu
@@ -94,6 +95,7 @@ pub struct InternalID {
 /// Also see <https://kuzudb.com/docs/cypher/data-types/overview.html>
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
+    Any,
     Bool(bool),
     Int64(i64),
     Int32(i32),
@@ -121,7 +123,10 @@ pub enum Value {
     /// <https://kuzudb.com/docs/cypher/data-types/string.html>
     String(String),
     /// <https://kuzudb.com/docs/cypher/data-types/list.html>
-    List(Box<Vec<Value>>),
+    VarList(Vec<Value>),
+    FixedList(Vec<Value>),
+    /// https://kuzudb.com/docs/cypher/data-types/struct.html
+    Struct(HashMap<String, Value>),
     Node(Box<NodeValue>),
     Rel(Box<RelValue>),
 }
@@ -168,6 +173,7 @@ impl TryFrom<&ffi::Value> for Value {
     fn try_from(value: &ffi::Value) -> Result<Self, Self::Error> {
         use ffi::LogicalTypeID;
         match ffi::value_get_data_type_id(value) {
+            LogicalTypeID::ANY => Ok(Value::Any),
             LogicalTypeID::BOOL => Ok(Value::Bool(value.get_value_bool())),
             LogicalTypeID::INT16 => Ok(Value::Int16(value.get_value_i16())),
             LogicalTypeID::INT32 => Ok(Value::Int32(value.get_value_i32())),
@@ -194,6 +200,54 @@ impl TryFrom<&ffi::Value> for Value {
                     .checked_add(time::Duration::microseconds(us))
                     .map(Value::Timestamp)
                     .ok_or(ConversionError::Timestamp(us))
+            }
+            LogicalTypeID::VAR_LIST => {
+                let list = ffi::value_get_list(value);
+                let mut result = vec![];
+                for index in 0..list.size() {
+                    let value: Value = list.get(index).as_ref().unwrap().try_into()?;
+                    result.push(value);
+                }
+                Ok(Value::VarList(result))
+            }
+            LogicalTypeID::FIXED_LIST => {
+                let list = ffi::value_get_list(value);
+                let mut result = vec![];
+                for index in 0..list.size() {
+                    let value: Value = list.get(index).as_ref().unwrap().try_into()?;
+                    result.push(value);
+                }
+                Ok(Value::FixedList(result))
+            }
+            LogicalTypeID::STRUCT => {
+                // Data is a list of field values in the value itself (same as list),
+                // with the field names stored in the DataType
+                let field_names = ffi::value_get_struct_names(value);
+                let list = ffi::value_get_list(value);
+                let mut result = HashMap::new();
+                for index in 0..list.size() {
+                    let value: Value = list.get(index).as_ref().unwrap().try_into()?;
+                    result.insert(
+                        field_names
+                            .as_ref()
+                            .unwrap()
+                            .get(index as usize)
+                            // Presumably an internal error if this panics?
+                            .unwrap()
+                            .to_string(),
+                        value,
+                    );
+                }
+                Ok(Value::Struct(result))
+            }
+            /*
+            LogicalTypeID::NODE => {}
+            LogicalTypeID::REL => {}
+            */
+            LogicalTypeID::INTERNAL_ID => {
+                let internal_id = ffi::value_get_internal_id(value);
+                let (offset, table) = (internal_id[0], internal_id[1]);
+                Ok(Value::InternalID(InternalID { offset, table }))
             }
             _ => unimplemented!(),
         }
