@@ -254,4 +254,112 @@ impl TryFrom<&ffi::Value> for Value {
     }
 }
 
-// TODO: Test that intervals, dates, etc. have the expected values
+impl From<i16> for Value {
+    fn from(item: i16) -> Self {
+        Value::Int16(item)
+    }
+}
+
+impl From<i32> for Value {
+    fn from(item: i32) -> Self {
+        Value::Int32(item)
+    }
+}
+
+impl From<i64> for Value {
+    fn from(item: i64) -> Self {
+        Value::Int64(item)
+    }
+}
+
+impl From<f32> for Value {
+    fn from(item: f32) -> Self {
+        Value::Float(item)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(item: f64) -> Self {
+        Value::Double(item)
+    }
+}
+
+impl From<String> for Value {
+    fn from(item: String) -> Self {
+        Value::String(item)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(item: &str) -> Self {
+        Value::String(item.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{connection::Connection, database::Database, value::Value};
+    use anyhow::Result;
+    use std::collections::HashSet;
+    use std::iter::FromIterator;
+    use time::macros::datetime;
+
+    // Note: Cargo runs tests in parallel by default, however kuzu does not support
+    // working with multiple databases in parallel.
+    // Tests can be run serially with `cargo test -- --test-threads=1` to work around this.
+
+    #[test]
+    /// Tests that the list value is correctly constructed
+    fn test_var_list_get() -> Result<()> {
+        let temp_dir = tempdir::TempDir::new("example")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+        let mut conn = Connection::new(&mut db)?;
+        for result in conn.query("RETURN [\"Alice\", \"Bob\"] AS l;")? {
+            assert_eq!(result.len(), 1);
+            assert_eq!(
+                result[0],
+                Value::VarList(vec!["Alice".into(), "Bob".into(),])
+            );
+        }
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    /// Test that the timestamp round-trips through kuzu's internal timestamp
+    fn test_timestamp() -> Result<()> {
+        let temp_dir = tempdir::TempDir::new("example")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+        let mut conn = Connection::new(&mut db)?;
+        conn.query(
+            "CREATE NODE TABLE Person(name STRING, registerTime TIMESTAMP, PRIMARY KEY(name));",
+        )?;
+        conn.query(
+            "CREATE (:Person {name: \"Alice\", registerTime: timestamp(\"2011-08-20 11:25:30\")});",
+        )?;
+        let mut add_person =
+            conn.prepare("CREATE (:Person {name: $name, registerTime: $time});")?;
+        conn.execute(
+            &mut add_person,
+            &[
+                ("name", "Bob".into()),
+                ("time", Value::Timestamp(datetime!(2011-08-20 11:25:30 UTC))),
+            ],
+        )?;
+        let result: HashSet<String> = conn
+            .query(
+                "MATCH (a:Person) WHERE a.registerTime = timestamp(\"2011-08-20 11:25:30\") RETURN a.name;",
+            )?
+            .map(|x| match &x[0] {
+                Value::String(x) => x.clone(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(
+            result,
+            HashSet::from_iter(vec!["Alice".to_string(), "Bob".to_string()])
+        );
+        temp_dir.close()?;
+        Ok(())
+    }
+}

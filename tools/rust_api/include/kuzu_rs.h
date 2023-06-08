@@ -23,6 +23,11 @@ struct QueryParams {
         inputParams.insert(
             std::make_pair(key, std::make_shared<kuzu::common::Value>(std::string(value))));
     }
+
+    void insert_timestamp(const rust::Str key, const int64_t timestamp) {
+        inputParams.insert(std::make_pair(
+            key, std::make_shared<kuzu::common::Value>(kuzu::common::timestamp_t(timestamp))));
+    }
 };
 
 std::unique_ptr<QueryParams> new_params();

@@ -154,6 +154,10 @@ impl<'a> Connection<'a> {
                 Value::Float(value) => cxx_params.pin_mut().insert_float(key, *value),
                 Value::Double(value) => cxx_params.pin_mut().insert_double(key, *value),
                 Value::String(value) => cxx_params.pin_mut().insert_string(key, value),
+                Value::Timestamp(value) => cxx_params
+                    .pin_mut()
+                    // Convert to microseconds since 1970-01-01
+                    .insert_timestamp(key, (value.unix_timestamp_nanos() / 1000) as i64),
                 _ => unimplemented!(),
             }
         }
