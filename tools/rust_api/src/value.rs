@@ -302,7 +302,7 @@ mod tests {
     use anyhow::Result;
     use std::collections::HashSet;
     use std::iter::FromIterator;
-    use time::macros::datetime;
+    use time::macros::{date, datetime};
 
     // Note: Cargo runs tests in parallel by default, however kuzu does not support
     // working with multiple databases in parallel.
@@ -339,11 +339,12 @@ mod tests {
         )?;
         let mut add_person =
             conn.prepare("CREATE (:Person {name: $name, registerTime: $time});")?;
+        let timestamp = datetime!(2011-08-20 11:25:30 UTC);
         conn.execute(
             &mut add_person,
             &[
                 ("name", "Bob".into()),
-                ("time", Value::Timestamp(datetime!(2011-08-20 11:25:30 UTC))),
+                ("time", Value::Timestamp(timestamp)),
             ],
         )?;
         let result: HashSet<String> = conn
@@ -359,6 +360,41 @@ mod tests {
             result,
             HashSet::from_iter(vec!["Alice".to_string(), "Bob".to_string()])
         );
+        let mut result =
+            conn.query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.registerTime;")?;
+        let result: time::OffsetDateTime =
+            if let Value::Timestamp(timestamp) = result.next().unwrap()[0] {
+                timestamp
+            } else {
+                panic!("Wrong type returned!")
+            };
+        assert_eq!(result, timestamp);
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    /// Test that the date round-trips through kuzu's internal date
+    fn test_date() -> Result<()> {
+        let temp_dir = tempdir::TempDir::new("example")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+        let mut conn = Connection::new(&mut db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, registerDate DATE, PRIMARY KEY(name));")?;
+        let mut add_person =
+            conn.prepare("CREATE (:Person {name: $name, registerDate: $date});")?;
+        let date = date!(2011 - 08 - 20);
+        conn.execute(
+            &mut add_person,
+            &[("name", "Bob".into()), ("date", Value::Date(date))],
+        )?;
+        let mut result =
+            conn.query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.registerDate;")?;
+        let result: time::Date = if let Value::Date(date) = result.next().unwrap()[0] {
+            date
+        } else {
+            panic!("Expected a Date Value")
+        };
+        assert_eq!(result, date);
         temp_dir.close()?;
         Ok(())
     }

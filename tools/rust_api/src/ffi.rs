@@ -68,6 +68,7 @@ pub(crate) mod ffi {
 
         fn insert_string(self: Pin<&mut Self>, key: &str, value: &String);
         fn insert_timestamp(self: Pin<&mut Self>, key: &str, value: i64);
+        fn insert_date(self: Pin<&mut Self>, key: &str, value: i64);
 
         fn new_params() -> UniquePtr<QueryParams>;
     }

@@ -158,6 +158,13 @@ impl<'a> Connection<'a> {
                     .pin_mut()
                     // Convert to microseconds since 1970-01-01
                     .insert_timestamp(key, (value.unix_timestamp_nanos() / 1000) as i64),
+                Value::Date(value) => cxx_params
+                    .pin_mut()
+                    // Convert to microseconds since 1970-01-01
+                    .insert_date(
+                        key,
+                        (*value - time::Date::from_ordinal_date(1970, 1).unwrap()).whole_days(),
+                    ),
                 _ => unimplemented!(),
             }
         }
