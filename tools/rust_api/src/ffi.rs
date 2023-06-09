@@ -2,6 +2,7 @@
 pub(crate) mod ffi {
     // From types.h
     #[namespace = "kuzu::common"]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum LogicalTypeID {
         ANY = 0,
         NODE = 10,
@@ -70,6 +71,7 @@ pub(crate) mod ffi {
         fn insert_timestamp(self: Pin<&mut Self>, key: &str, value: i64);
         fn insert_date(self: Pin<&mut Self>, key: &str, value: i64);
         fn insert_interval(self: Pin<&mut Self>, key: &str, months: i32, days: i32, micros: i64);
+        fn insert_null(self: Pin<&mut Self>, key: &str, typ: LogicalTypeID);
 
         fn new_params() -> UniquePtr<QueryParams>;
     }
@@ -178,6 +180,8 @@ pub(crate) mod ffi {
         fn value_get_struct_names(value: &Value) -> UniquePtr<CxxVector<CxxString>>;
 
         fn value_get_data_type_id(value: &Value) -> LogicalTypeID;
+
+        fn isNull(&self) -> bool;
     }
 
     unsafe extern "C++" {

@@ -90,12 +90,93 @@ pub struct InternalID {
     pub(crate) table: u64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum LogicalType {
+    Any,
+    Bool,
+    Int64,
+    Int32,
+    Int16,
+    Double,
+    Float,
+    Date,
+    Interval,
+    Timestamp,
+    InternalID,
+    String,
+    VarList {
+        child_type: Box<LogicalType>,
+    },
+    FixedList {
+        child_type: Box<LogicalType>,
+        num_elements: u64,
+    },
+    Struct {
+        fields: Vec<(String, LogicalType)>,
+    },
+    Node,
+    Rel,
+}
+
+impl From<&ffi::Value> for LogicalType {
+    fn from(value: &ffi::Value) -> Self {
+        use ffi::LogicalTypeID;
+        match ffi::value_get_data_type_id(value) {
+            LogicalTypeID::ANY => LogicalType::Any,
+            LogicalTypeID::BOOL => LogicalType::Bool,
+            LogicalTypeID::INT16 => LogicalType::Int16,
+            LogicalTypeID::INT32 => LogicalType::Int32,
+            LogicalTypeID::INT64 => LogicalType::Int64,
+            LogicalTypeID::FLOAT => LogicalType::Float,
+            LogicalTypeID::DOUBLE => LogicalType::Double,
+            LogicalTypeID::STRING => LogicalType::String,
+            LogicalTypeID::INTERVAL => LogicalType::Interval,
+            LogicalTypeID::DATE => LogicalType::Date,
+            LogicalTypeID::TIMESTAMP => LogicalType::Timestamp,
+            LogicalTypeID::INTERNAL_ID => LogicalType::InternalID,
+            LogicalTypeID::VAR_LIST
+            | LogicalTypeID::FIXED_LIST
+            | LogicalTypeID::STRUCT
+            | LogicalTypeID::NODE
+            | LogicalTypeID::REL => unimplemented!(),
+            // Should be unreachable, as cxx will check that the LogicalTypeID enum matches the one
+            // on the C++ side.
+            x => panic!("Unsupported type {:?}", x),
+        }
+    }
+}
+
+impl LogicalType {
+    pub(crate) fn id(&self) -> ffi::LogicalTypeID {
+        use ffi::LogicalTypeID;
+        match self {
+            LogicalType::Any => LogicalTypeID::ANY,
+            LogicalType::Bool => LogicalTypeID::BOOL,
+            LogicalType::Int16 => LogicalTypeID::INT16,
+            LogicalType::Int32 => LogicalTypeID::INT32,
+            LogicalType::Int64 => LogicalTypeID::INT64,
+            LogicalType::Float => LogicalTypeID::FLOAT,
+            LogicalType::Double => LogicalTypeID::DOUBLE,
+            LogicalType::String => LogicalTypeID::STRING,
+            LogicalType::Interval => LogicalTypeID::INTERVAL,
+            LogicalType::Date => LogicalTypeID::DATE,
+            LogicalType::Timestamp => LogicalTypeID::TIMESTAMP,
+            LogicalType::InternalID => LogicalTypeID::INTERNAL_ID,
+            LogicalType::VarList { .. }
+            | LogicalType::FixedList { .. }
+            | LogicalType::Struct { .. }
+            | LogicalType::Node
+            | LogicalType::Rel => unimplemented!(),
+        }
+    }
+}
+
 /// Data types supported by Kùzu
 ///
 /// Also see <https://kuzudb.com/docs/cypher/data-types/overview.html>
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
-    Any,
+    Null(LogicalType),
     Bool(bool),
     Int64(i64),
     Int32(i32),
@@ -122,10 +203,14 @@ pub enum Value {
     InternalID(InternalID),
     /// <https://kuzudb.com/docs/cypher/data-types/string.html>
     String(String),
+    // TODO: Enforce type of contents
+    /// These must contain elements which are all the same type.
     /// <https://kuzudb.com/docs/cypher/data-types/list.html>
     VarList(Vec<Value>),
+    /// These must contain elements which are all the same type.
+    /// <https://kuzudb.com/docs/cypher/data-types/list.html>
     FixedList(Vec<Value>),
-    /// https://kuzudb.com/docs/cypher/data-types/struct.html
+    /// <https://kuzudb.com/docs/cypher/data-types/struct.html>
     Struct(HashMap<String, Value>),
     Node(Box<NodeValue>),
     Rel(Box<RelValue>),
@@ -146,34 +231,16 @@ impl std::fmt::Display for Value {
     }
 }
 
-/*
-impl Value for Value {
-    fn get_cpp_value(self) -> ffi::Value {
-        use Self::*;
-        match self {
-            Bool(x) => ffi::bool_value(x),
-            Int64(x),
-            Int32(x),
-            Int16(x),
-            Double(x),
-            Float(x),
-            Date,
-            Timestamp,
-            InternalID,
-            String(x),
-            Nested(x) | Node(x) | Rel(x) => x.get_cpp_value(),
-        }
-    }
-}
-*/
-
 impl TryFrom<&ffi::Value> for Value {
     type Error = ConversionError;
 
     fn try_from(value: &ffi::Value) -> Result<Self, Self::Error> {
         use ffi::LogicalTypeID;
+        if value.isNull() {
+            return Ok(Value::Null(value.into()));
+        }
         match ffi::value_get_data_type_id(value) {
-            LogicalTypeID::ANY => Ok(Value::Any),
+            LogicalTypeID::ANY => unimplemented!(),
             LogicalTypeID::BOOL => Ok(Value::Bool(value.get_value_bool())),
             LogicalTypeID::INT16 => Ok(Value::Int16(value.get_value_i16())),
             LogicalTypeID::INT32 => Ok(Value::Int32(value.get_value_i32())),
@@ -240,16 +307,16 @@ impl TryFrom<&ffi::Value> for Value {
                 }
                 Ok(Value::Struct(result))
             }
-            /*
-            LogicalTypeID::NODE => {}
-            LogicalTypeID::REL => {}
-            */
+            LogicalTypeID::NODE => unimplemented!(),
+            LogicalTypeID::REL => unimplemented!(),
             LogicalTypeID::INTERNAL_ID => {
                 let internal_id = ffi::value_get_internal_id(value);
                 let (offset, table) = (internal_id[0], internal_id[1]);
                 Ok(Value::InternalID(InternalID { offset, table }))
             }
-            _ => unimplemented!(),
+            // Should be unreachable, as cxx will check that the LogicalTypeID enum matches the one
+            // on the C++ side.
+            x => panic!("Unsupported type {:?}", x),
         }
     }
 }
@@ -298,7 +365,11 @@ impl From<&str> for Value {
 
 #[cfg(test)]
 mod tests {
-    use crate::{connection::Connection, database::Database, value::Value};
+    use crate::{
+        connection::Connection,
+        database::Database,
+        value::{LogicalType, Value},
+    };
     use anyhow::Result;
     use std::collections::HashSet;
     use std::iter::FromIterator;
@@ -425,6 +496,47 @@ mod tests {
             panic!("Expected an Interval Value")
         };
         assert_eq!(result, interval);
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    /// Test that the date round-trips through kuzu's internal date
+    fn test_null() -> Result<()> {
+        use time::Duration;
+        let temp_dir = tempdir::TempDir::new("example")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+        let mut conn = Connection::new(&mut db)?;
+        let result = conn.query("RETURN null")?.next();
+        let result = &result.unwrap()[0];
+        assert_eq!(result, &Value::Null(LogicalType::String));
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    /// Test that the date round-trips through kuzu's internal date
+    fn test_null_data() -> Result<()> {
+        use time::Duration;
+        let temp_dir = tempdir::TempDir::new("example")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+        let mut conn = Connection::new(&mut db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
+        let mut add_person = conn.prepare("CREATE (:Person {name: $name, age: $age});")?;
+
+        conn.execute(
+            &mut add_person,
+            &[
+                ("name", "Bob".into()),
+                ("age", Value::Null(LogicalType::Int64)),
+            ],
+        )?;
+
+        let result = conn
+            .query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.age")?
+            .next();
+        let result = &result.unwrap()[0];
+        assert_eq!(result, &Value::Null(LogicalType::Int64));
         temp_dir.close()?;
         Ok(())
     }

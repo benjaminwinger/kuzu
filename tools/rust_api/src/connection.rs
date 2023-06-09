@@ -147,6 +147,7 @@ impl<'a> Connection<'a> {
         let mut cxx_params = ffi::new_params();
         for (key, value) in params {
             match value {
+                Value::Null(typ) => cxx_params.pin_mut().insert_null(key, typ.id()),
                 Value::Bool(value) => cxx_params.pin_mut().insert_bool(key, *value),
                 Value::Int16(value) => cxx_params.pin_mut().insert_i16(key, *value),
                 Value::Int32(value) => cxx_params.pin_mut().insert_i32(key, *value),

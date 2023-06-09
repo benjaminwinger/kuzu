@@ -15,6 +15,12 @@ namespace kuzu_rs {
 struct QueryParams {
     std::unordered_map<std::string, std::shared_ptr<kuzu::common::Value>> inputParams;
 
+    // TODO: Should take a DataType, not a DataTypeID. This won't work for compound types
+    void insert_null(const rust::Str key, kuzu::common::LogicalTypeID typ) {
+        inputParams.insert(std::make_pair(
+            key, std::make_shared<kuzu::common::Value>(
+                     kuzu::common::Value::createNullValue(kuzu::common::LogicalType(typ)))));
+    }
     template<typename T>
     void insert(const rust::Str key, const T value) {
         inputParams.insert(std::make_pair(key, std::make_shared<kuzu::common::Value>(value)));

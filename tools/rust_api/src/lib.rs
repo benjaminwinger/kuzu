@@ -38,4 +38,4 @@ pub use connection::{Connection, PreparedStatement};
 pub use database::{Database, LoggingLevel};
 pub use error::Error;
 pub use query_result::QueryResult;
-pub use value::Value;
+pub use value::{LogicalType, Value};
