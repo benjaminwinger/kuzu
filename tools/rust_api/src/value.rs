@@ -398,4 +398,34 @@ mod tests {
         temp_dir.close()?;
         Ok(())
     }
+
+    #[test]
+    /// Test that the date round-trips through kuzu's internal date
+    fn test_interval() -> Result<()> {
+        use time::Duration;
+        let temp_dir = tempdir::TempDir::new("example")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+        let mut conn = Connection::new(&mut db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, interval INTERVAL, PRIMARY KEY(name));")?;
+        let mut add_person =
+            conn.prepare("CREATE (:Person {name: $name, interval: $interval});")?;
+        let interval = Duration::weeks(3);
+        conn.execute(
+            &mut add_person,
+            &[
+                ("name", "Bob".into()),
+                ("interval", Value::Interval(interval)),
+            ],
+        )?;
+        let mut result =
+            conn.query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.interval;")?;
+        let result: Duration = if let Value::Interval(interval) = result.next().unwrap()[0] {
+            interval
+        } else {
+            panic!("Expected an Interval Value")
+        };
+        assert_eq!(result, interval);
+        temp_dir.close()?;
+        Ok(())
+    }
 }

@@ -32,6 +32,12 @@ struct QueryParams {
         inputParams.insert(
             std::make_pair(key, std::make_shared<kuzu::common::Value>(kuzu::common::date_t(date))));
     }
+
+    void insert_interval(
+        const rust::Str key, const int32_t months, const int32_t days, const int64_t micros) {
+        inputParams.insert(std::make_pair(key,
+            std::make_shared<kuzu::common::Value>(kuzu::common::interval_t(months, days, micros))));
+    }
 };
 
 std::unique_ptr<QueryParams> new_params();

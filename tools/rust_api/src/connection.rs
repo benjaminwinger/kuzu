@@ -160,11 +160,23 @@ impl<'a> Connection<'a> {
                     .insert_timestamp(key, (value.unix_timestamp_nanos() / 1000) as i64),
                 Value::Date(value) => cxx_params
                     .pin_mut()
-                    // Convert to microseconds since 1970-01-01
+                    // Convert to days since 1970-01-01
                     .insert_date(
                         key,
                         (*value - time::Date::from_ordinal_date(1970, 1).unwrap()).whole_days(),
                     ),
+                Value::Interval(value) => {
+                    use time::Duration;
+                    let mut interval = *value;
+                    let months = interval.whole_days() / 30;
+                    interval -= Duration::days(months * 30);
+                    let days = interval.whole_days();
+                    interval -= Duration::days(days);
+                    let micros = interval.whole_microseconds() as i64;
+                    cxx_params
+                        .pin_mut()
+                        .insert_interval(key, months as i32, days as i32, micros)
+                }
                 _ => unimplemented!(),
             }
         }
