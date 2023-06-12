@@ -60,8 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("cargo:rustc-link-lib=static=arrow_bundled_dependencies");
         // Dependencies of arrow's bundled dependencies
-        println!("cargo:rustc-link-lib=dylib=ssl");
-        println!("cargo:rustc-link-lib=dylib=crypto");
+        println!("cargo:rustc-link-lib=static=ssl");
+        println!("cargo:rustc-link-lib=static=crypto");
 
         println!("cargo:rustc-link-lib=static=parquet");
         println!("cargo:rustc-link-lib=static=arrow");

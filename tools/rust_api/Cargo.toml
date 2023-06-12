@@ -17,6 +17,7 @@ cxx = "1.0"
 num-derive = "0.3"
 num-traits = "0.2"
 time = "0.3"
+openssl-sys = "0.9"
 
 [build-dependencies]
 cxx-build = "1.0"
@@ -26,3 +27,6 @@ num_cpus = "1.0"
 tempdir = "0.3"
 anyhow = "1"
 time = {version="0.3", features=["macros"]}
+
+[features]
+vendored = ['openssl-sys/vendored']
