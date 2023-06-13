@@ -9,6 +9,8 @@ pub struct Database {
     pub(crate) db: UniquePtr<ffi::Database>,
 }
 
+unsafe impl<'a> Send for ffi::Database {}
+
 pub enum LoggingLevel {
     Debug,
     Info,

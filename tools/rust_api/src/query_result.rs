@@ -9,6 +9,9 @@ pub struct QueryResult {
     pub(crate) result: UniquePtr<ffi::QueryResult>,
 }
 
+// Should be safe to move across threads, however access is not synchronized
+unsafe impl<'a> Send for ffi::QueryResult {}
+
 // TODO: getNext will throw an exception if the query result is a failure result
 // Is there any need for a QueryResult at all in that case, instead of some form of error?
 // If so, then we need to make sure you can't call next when the query failed.

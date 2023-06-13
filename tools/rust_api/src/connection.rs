@@ -4,15 +4,25 @@ use crate::ffi::ffi;
 use crate::query_result::QueryResult;
 use crate::value::Value;
 use cxx::{let_cxx_string, UniquePtr};
+use std::convert::TryInto;
 
+/// A prepared stattement is a parameterized query which can avoid planning the same query for
+/// repeated execution
 pub struct PreparedStatement {
     statement: UniquePtr<ffi::PreparedStatement>,
 }
 
 /// Connections are used to interact with a Database instance.
 ///
+/// ## Multithreading
+///
 /// Each connection is thread-safe, and multiple connections can connect to the same Database
 /// instance in a multithreaded environment.
+///
+/// Note that since connections require a reference to the Database, creating or using connections
+/// in multiple threads cannot be done from a regular std::thread since the threads (and
+/// connections) could outlive the database. This can be worked around by using a scoped thread
+/// such as [crosssbeam_utils::thread::scope](https://docs.rs/crossbeam-utils/0.8.15/crossbeam_utils/thread/index.html)
 ///
 /// ## Committing
 /// If the connection is in AUTO_COMMIT mode any query over the connection will be wrapped around
@@ -80,6 +90,11 @@ pub struct PreparedStatement {
 pub struct Connection<'a> {
     conn: UniquePtr<ffi::Connection<'a>>,
 }
+
+// Connections are synchronized on the C++ side and should be safe to move and access across
+// threads
+unsafe impl<'a> Send for ffi::Connection<'a> {}
+unsafe impl<'a> Sync for ffi::Connection<'a> {}
 
 impl<'a> Connection<'a> {
     /// Creates a connection to the database.
@@ -302,4 +317,94 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
         temp_dir.close()?;
         Ok(())
     }
+
+    /*
+    #[test]
+    fn test_multithreaded_single_conn() -> Result<()> {
+        use crossbeam_utils::thread;
+        use std::collections::HashMap;
+        let temp_dir = tempdir::TempDir::new("example3")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+
+        let mut conn = Connection::new(&mut db)?;
+        thread::scope(|s| {
+            conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
+
+            let alice_thread =
+                s.spawn(&mut |_| conn.query("CREATE (:Person {name: 'Alice', age: 25});"));
+            let bob_thread =
+                s.spawn(&mut |_| conn.query("CREATE (:Person {name: 'Bob', age: 30});"));
+
+            alice_thread.join().unwrap()?;
+            bob_thread.join().unwrap()?;
+
+            let people: HashMap<String, i16> = conn
+                .query("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?
+                .map(|person| {
+                    if let (Value::String(ref name), Value::Int16(ref age)) =
+                        (&person[0], &person[1])
+                    {
+                        (name.clone(), *age)
+                    } else {
+                        panic!("Query result was not a (STRING, INT16) tuple!")
+                    }
+                })
+                .collect();
+            let expected: HashMap<String, i16> =
+                vec![("Alice".to_string(), 25i16), ("Bob".to_string(), 30i16)]
+                    .into_iter()
+                    .collect();
+            assert_eq!(people, expected);
+            Ok::<(), anyhow::Error>(())
+        })
+        .unwrap()?;
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_multithreaded_multiple_conn() -> Result<()> {
+        use crossbeam_utils::thread;
+        use std::collections::HashMap;
+        let temp_dir = tempdir::TempDir::new("example3")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+
+        let mut conn = Connection::new(&mut db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
+        thread::scope(|s| {
+            let alice_thread = s.spawn(&mut |_| {
+                let mut conn = Connection::new(&mut db)?;
+                conn.query("CREATE (:Person {name: 'Alice', age: 25});")
+            });
+            let bob_thread = s.spawn(&mut |_| {
+                let mut conn = Connection::new(&mut db)?;
+                conn.query("CREATE (:Person {name: 'Bob', age: 30});")
+            });
+            alice_thread.join().unwrap()?;
+            bob_thread.join().unwrap()?;
+
+            let people: HashMap<String, i16> = conn
+                .query("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?
+                .map(|person| {
+                    if let (Value::String(ref name), Value::Int16(ref age)) =
+                        (&person[0], &person[1])
+                    {
+                        (name.clone(), *age)
+                    } else {
+                        panic!("Query result was not a (STRING, INT16) tuple!")
+                    }
+                })
+                .collect();
+            let expected: HashMap<String, i16> =
+                vec![("Alice".to_string(), 25i16), ("Bob".to_string(), 30i16)]
+                    .into_iter()
+                    .collect();
+            assert_eq!(people, expected);
+            Ok::<(), anyhow::Error>(())
+        })
+        .unwrap()?;
+        temp_dir.close()?;
+        Ok(())
+    }
+    */
 }
