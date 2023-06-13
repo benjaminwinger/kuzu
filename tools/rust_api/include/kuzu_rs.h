@@ -15,7 +15,9 @@ namespace kuzu_rs {
 struct TypeListBuilder {
     std::vector<std::unique_ptr<kuzu::common::LogicalType>> types;
 
-    void insert(std::unique_ptr<kuzu::common::LogicalType> type) { types.push_back(std::move(type)); }
+    void insert(std::unique_ptr<kuzu::common::LogicalType> type) {
+        types.push_back(std::move(type));
+    }
 };
 
 std::unique_ptr<TypeListBuilder> create_type_list();
@@ -36,7 +38,7 @@ std::unique_ptr<kuzu::common::LogicalType> create_logical_type_var_list(
 std::unique_ptr<kuzu::common::LogicalType> create_logical_type_fixed_list(
     std::unique_ptr<kuzu::common::LogicalType> childType, uint64_t numElements);
 std::unique_ptr<kuzu::common::LogicalType> create_logical_type_struct(
-    const rust::Vec<rust::String> &fieldNames, std::unique_ptr<TypeListBuilder> fieldTypes);
+    const rust::Vec<rust::String>& fieldNames, std::unique_ptr<TypeListBuilder> fieldTypes);
 
 const kuzu::common::LogicalType& logical_type_get_var_list_child_type(
     const kuzu::common::LogicalType& logicalType);
@@ -45,7 +47,8 @@ const kuzu::common::LogicalType& logical_type_get_fixed_list_child_type(
 uint64_t logical_type_get_fixed_list_num_elements(const kuzu::common::LogicalType& logicalType);
 
 rust::Vec<rust::String> logical_type_get_struct_field_names(const kuzu::common::LogicalType& value);
-std::unique_ptr<std::vector<kuzu::common::LogicalType>> logical_type_get_struct_field_types(const kuzu::common::LogicalType& value);
+std::unique_ptr<std::vector<kuzu::common::LogicalType>> logical_type_get_struct_field_types(
+    const kuzu::common::LogicalType& value);
 
 // Simple wrapper for vector of unique_ptr since cxx doesn't support functions returning a vector of
 // unique_ptr
@@ -74,6 +77,15 @@ rust::String prepared_statement_error_message(const kuzu::main::PreparedStatemen
 rust::String query_result_to_string(kuzu::main::QueryResult& result);
 rust::String query_result_get_error_message(const kuzu::main::QueryResult& result);
 
+double query_result_get_compiling_time(const kuzu::main::QueryResult& result);
+double query_result_get_execution_time(const kuzu::main::QueryResult& result);
+
+void query_result_write_to_csv(kuzu::main::QueryResult& query_result, const rust::String& filename,
+    int8_t delimiter, int8_t escape_character, int8_t newline);
+
+std::unique_ptr<std::vector<kuzu::common::LogicalType>> query_result_column_data_types(const kuzu::main::QueryResult &query_result);
+rust::Vec<rust::String> query_result_column_names(const kuzu::main::QueryResult &query_result);
+
 /* NodeVal */
 rust::String node_value_to_string(const kuzu::common::NodeVal& val);
 
@@ -99,7 +111,8 @@ std::unique_ptr<kuzu::common::Value> create_value_date(const int64_t date);
 std::unique_ptr<kuzu::common::Value> create_value_interval(
     const int32_t months, const int32_t days, const int64_t micros);
 // TODO: Should take a DataType, not a DataTypeID. This won't work for compound types
-std::unique_ptr<kuzu::common::Value> create_value_null(std::unique_ptr<kuzu::common::LogicalType> typ);
+std::unique_ptr<kuzu::common::Value> create_value_null(
+    std::unique_ptr<kuzu::common::LogicalType> typ);
 
 template<typename T>
 std::unique_ptr<kuzu::common::Value> create_value(const T value) {

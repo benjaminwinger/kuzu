@@ -102,6 +102,29 @@ rust::String query_result_get_error_message(const kuzu::main::QueryResult& resul
     return rust::String(result.getErrorMessage());
 }
 
+double query_result_get_compiling_time(const kuzu::main::QueryResult& result) {
+    return result.getQuerySummary()->getCompilingTime();
+}
+double query_result_get_execution_time(const kuzu::main::QueryResult& result) {
+    return result.getQuerySummary()->getExecutionTime();
+}
+
+void query_result_write_to_csv(kuzu::main::QueryResult& query_result, const rust::String& filename,
+    int8_t delimiter, int8_t escape_character, int8_t newline) {
+    query_result.writeToCSV(std::string(filename), (char)delimiter, (char)escape_character, (char)newline);
+}
+
+std::unique_ptr<std::vector<kuzu::common::LogicalType>> query_result_column_data_types(const kuzu::main::QueryResult &query_result) {
+    return std::make_unique<std::vector<kuzu::common::LogicalType>>(query_result.getColumnDataTypes());
+}
+rust::Vec<rust::String> query_result_column_names(const kuzu::main::QueryResult &query_result) {
+    rust::Vec<rust::String> names;
+    for (auto name : query_result.getColumnNames()) {
+        names.push_back(name);
+    }
+    return names;
+}
+
 rust::String node_value_to_string(const kuzu::common::NodeVal& val) {
     return rust::String(val.toString());
 }

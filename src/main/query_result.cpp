@@ -57,15 +57,15 @@ size_t QueryResult::getNumColumns() const {
     return columnDataTypes.size();
 }
 
-std::vector<std::string> QueryResult::getColumnNames() {
+std::vector<std::string> QueryResult::getColumnNames() const {
     return columnNames;
 }
 
-std::vector<common::LogicalType> QueryResult::getColumnDataTypes() {
+std::vector<common::LogicalType> QueryResult::getColumnDataTypes() const {
     return columnDataTypes;
 }
 
-uint64_t QueryResult::getNumTuples() {
+uint64_t QueryResult::getNumTuples() const {
     return querySummary->getIsExplain() ? 0 : factorizedTable->getTotalNumFlatTuples();
 }
 

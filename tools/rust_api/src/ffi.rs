@@ -114,6 +114,26 @@ pub(crate) mod ffi {
         fn query_result_get_error_message(query_result: &QueryResult) -> String;
         fn hasNext(&self) -> bool;
         fn getNext(self: Pin<&mut QueryResult>) -> SharedPtr<FlatTuple>;
+
+        #[namespace = "kuzu_rs"]
+        fn query_result_get_compiling_time(result: &QueryResult) -> f64;
+        #[namespace = "kuzu_rs"]
+        fn query_result_get_execution_time(result: &QueryResult) -> f64;
+        fn getNumColumns(&self) -> usize;
+        fn getNumTuples(&self) -> u64;
+        #[namespace = "kuzu_rs"]
+        fn query_result_write_to_csv(
+            query_result: Pin<&mut QueryResult>,
+            filename: &String,
+            delimiter: i8,
+            escape_character: i8,
+            newline: i8,
+        ) -> Result<()>;
+
+        #[namespace = "kuzu_rs"]
+        fn query_result_column_data_types(query_result: &QueryResult) -> UniquePtr<CxxVector<LogicalType>>;
+        #[namespace = "kuzu_rs"]
+        fn query_result_column_names(query_result: &QueryResult) -> Vec<String>;
     }
 
     #[namespace = "kuzu::processor"]
@@ -158,7 +178,9 @@ pub(crate) mod ffi {
         fn logical_type_get_fixed_list_child_type(value: &LogicalType) -> &LogicalType;
         fn logical_type_get_fixed_list_num_elements(value: &LogicalType) -> u64;
         fn logical_type_get_struct_field_names(value: &LogicalType) -> Vec<String>;
-        fn logical_type_get_struct_field_types(value: &LogicalType) -> UniquePtr<CxxVector<LogicalType>>;
+        fn logical_type_get_struct_field_types(
+            value: &LogicalType,
+        ) -> UniquePtr<CxxVector<LogicalType>>;
     }
 
     #[namespace = "kuzu_rs"]
