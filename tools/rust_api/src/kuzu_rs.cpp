@@ -4,6 +4,7 @@ using kuzu::common::FixedListTypeInfo;
 using kuzu::common::Interval;
 using kuzu::common::LogicalType;
 using kuzu::common::LogicalTypeID;
+using kuzu::common::StructField;
 using kuzu::common::VarListTypeInfo;
 using kuzu::main::Connection;
 using kuzu::main::Database;
@@ -29,6 +30,17 @@ std::unique_ptr<LogicalType> create_logical_type_fixed_list(
         std::make_unique<FixedListTypeInfo>(std::move(childType), numElements));
 }
 
+std::unique_ptr<kuzu::common::LogicalType> create_logical_type_struct(
+    const rust::Vec<rust::String>& fieldNames, std::unique_ptr<TypeListBuilder> fieldTypes) {
+    std::vector<std::unique_ptr<StructField>> fields;
+    for (auto i = 0; i < fieldNames.size(); i++) {
+        fields.push_back(std::make_unique<StructField>(
+            std::string(fieldNames[i]), std::move(fieldTypes->types[i])));
+    }
+    return std::make_unique<LogicalType>(
+        LogicalTypeID::STRUCT, std::make_unique<kuzu::common::StructTypeInfo>(std::move(fields)));
+}
+
 const LogicalType& logical_type_get_var_list_child_type(const LogicalType& logicalType) {
     return *kuzu::common::VarListType::getChildType(&logicalType);
 }
@@ -37,6 +49,23 @@ const LogicalType& logical_type_get_fixed_list_child_type(const LogicalType& log
 }
 uint64_t logical_type_get_fixed_list_num_elements(const LogicalType& logicalType) {
     return kuzu::common::FixedListType::getNumElementsInList(&logicalType);
+}
+
+rust::Vec<rust::String> logical_type_get_struct_field_names(
+    const kuzu::common::LogicalType& value) {
+    rust::Vec<rust::String> names;
+    for (auto name : kuzu::common::StructType::getFieldNames(&value)) {
+        names.push_back(name);
+    }
+    return names;
+}
+
+std::unique_ptr<std::vector<kuzu::common::LogicalType>> logical_type_get_struct_field_types(const kuzu::common::LogicalType& value) {
+    std::vector<kuzu::common::LogicalType> result;
+    for (auto type : kuzu::common::StructType::getFieldTypes(&value)) {
+        result.push_back(*type);
+    }
+    return std::make_unique<std::vector<LogicalType>>(result);
 }
 
 std::unique_ptr<Database> new_database(
@@ -116,11 +145,6 @@ std::array<uint64_t, 2> value_get_internal_id(const kuzu::common::Value& value) 
 std::unique_ptr<ValueList> value_get_list(const kuzu::common::Value& value) {
     return std::make_unique<ValueList>(value.getListValReference());
 }
-std::unique_ptr<std::vector<std::string>> value_get_struct_names(const kuzu::common::Value& value) {
-    auto datatype = value.getDataType();
-    return std::make_unique<std::vector<std::string>>(
-        kuzu::common::StructType::getFieldNames(&datatype));
-}
 kuzu::common::LogicalTypeID value_get_data_type_id(const kuzu::common::Value& value) {
     return value.getDataType().getLogicalTypeID();
 }
@@ -141,10 +165,9 @@ std::unique_ptr<kuzu::common::Value> create_value_interval(
     const int32_t months, const int32_t days, const int64_t micros) {
     return std::make_unique<kuzu::common::Value>(kuzu::common::interval_t(months, days, micros));
 }
-// TODO: Should take a DataType, not a DataTypeID. This won't work for compound types
-std::unique_ptr<kuzu::common::Value> create_value_null(kuzu::common::LogicalTypeID typ) {
+std::unique_ptr<kuzu::common::Value> create_value_null(std::unique_ptr<kuzu::common::LogicalType> typ) {
     return std::make_unique<kuzu::common::Value>(
-        kuzu::common::Value::createNullValue(kuzu::common::LogicalType(typ)));
+        kuzu::common::Value::createNullValue(kuzu::common::LogicalType(*typ)));
 }
 
 std::unique_ptr<kuzu::common::Value> get_list_value(
@@ -154,6 +177,10 @@ std::unique_ptr<kuzu::common::Value> get_list_value(
 
 std::unique_ptr<ValueListBuilder> create_list() {
     return std::make_unique<ValueListBuilder>();
+}
+
+std::unique_ptr<TypeListBuilder> create_type_list() {
+    return std::make_unique<TypeListBuilder>();
 }
 
 } // namespace kuzu_rs

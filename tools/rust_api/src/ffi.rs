@@ -149,10 +149,16 @@ pub(crate) mod ffi {
             child_type: UniquePtr<LogicalType>,
             num_elements: u64,
         ) -> UniquePtr<LogicalType>;
+        fn create_logical_type_struct(
+            field_names: &Vec<String>,
+            types: UniquePtr<TypeListBuilder>,
+        ) -> UniquePtr<LogicalType>;
 
         fn logical_type_get_var_list_child_type(value: &LogicalType) -> &LogicalType;
         fn logical_type_get_fixed_list_child_type(value: &LogicalType) -> &LogicalType;
         fn logical_type_get_fixed_list_num_elements(value: &LogicalType) -> u64;
+        fn logical_type_get_struct_field_names(value: &LogicalType) -> Vec<String>;
+        fn logical_type_get_struct_field_types(value: &LogicalType) -> UniquePtr<CxxVector<LogicalType>>;
     }
 
     #[namespace = "kuzu_rs"]
@@ -165,6 +171,14 @@ pub(crate) mod ffi {
             value: UniquePtr<ValueListBuilder>,
         ) -> UniquePtr<Value>;
         fn create_list() -> UniquePtr<ValueListBuilder>;
+    }
+
+    #[namespace = "kuzu_rs"]
+    unsafe extern "C++" {
+        type TypeListBuilder;
+
+        fn insert(self: Pin<&mut TypeListBuilder>, typ: UniquePtr<LogicalType>);
+        fn create_type_list() -> UniquePtr<TypeListBuilder>;
     }
 
     #[namespace = "kuzu_rs"]
@@ -194,7 +208,6 @@ pub(crate) mod ffi {
         fn value_get_date_days(value: &Value) -> i32;
         fn value_get_internal_id(value: &Value) -> [u64; 2];
         fn value_get_list<'a>(value: &'a Value) -> UniquePtr<ValueList<'a>>;
-        fn value_get_struct_names(value: &Value) -> UniquePtr<CxxVector<CxxString>>;
 
         fn value_get_data_type_id(value: &Value) -> LogicalTypeID;
         fn value_get_data_type(value: &Value) -> UniquePtr<LogicalType>;
@@ -214,7 +227,7 @@ pub(crate) mod ffi {
         #[rust_name = "create_value_double"]
         fn create_value(value: f64) -> UniquePtr<Value>;
 
-        fn create_value_null(typ: LogicalTypeID) -> UniquePtr<Value>;
+        fn create_value_null(typ: UniquePtr<LogicalType>) -> UniquePtr<Value>;
         fn create_value_string(value: &String) -> UniquePtr<Value>;
         fn create_value_timestamp(value: i64) -> UniquePtr<Value>;
         fn create_value_date(value: i64) -> UniquePtr<Value>;

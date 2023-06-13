@@ -1,5 +1,4 @@
 use crate::ffi::ffi;
-use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 
@@ -151,7 +150,17 @@ impl From<&ffi::LogicalType> for LogicalType {
                 ),
                 num_elements: ffi::logical_type_get_fixed_list_num_elements(logical_type),
             },
-            LogicalTypeID::STRUCT | LogicalTypeID::NODE | LogicalTypeID::REL => unimplemented!(),
+            LogicalTypeID::STRUCT => {
+                let names = ffi::logical_type_get_struct_field_names(logical_type);
+                let types = ffi::logical_type_get_struct_field_types(logical_type);
+                LogicalType::Struct {
+                    fields: names
+                        .into_iter()
+                        .zip(types.into_iter().map(|x| Into::<LogicalType>::into(x)))
+                        .collect(),
+                }
+            }
+            LogicalTypeID::NODE | LogicalTypeID::REL => unimplemented!(),
             // Should be unreachable, as cxx will check that the LogicalTypeID enum matches the one
             // on the C++ side.
             x => panic!("Unsupported type {:?}", x),
@@ -181,7 +190,15 @@ impl Into<cxx::UniquePtr<ffi::LogicalType>> for &LogicalType {
                 child_type,
                 num_elements,
             } => ffi::create_logical_type_fixed_list(child_type.as_ref().into(), *num_elements),
-            LogicalType::Struct { fields: _ } => unimplemented!(),
+            LogicalType::Struct { fields } => {
+                let mut builder = ffi::create_type_list();
+                let mut names = vec![];
+                for (name, typ) in fields {
+                    names.push(name.clone());
+                    builder.pin_mut().insert(typ.into());
+                }
+                ffi::create_logical_type_struct(&names, builder)
+            }
             LogicalType::Node | LogicalType::Rel => unimplemented!(),
         }
     }
@@ -203,11 +220,11 @@ impl LogicalType {
             LogicalType::Date => LogicalTypeID::DATE,
             LogicalType::Timestamp => LogicalTypeID::TIMESTAMP,
             LogicalType::InternalID => LogicalTypeID::INTERNAL_ID,
-            LogicalType::VarList { .. }
-            | LogicalType::FixedList { .. }
-            | LogicalType::Struct { .. }
-            | LogicalType::Node
-            | LogicalType::Rel => unimplemented!(),
+            LogicalType::VarList { .. } => LogicalTypeID::VAR_LIST,
+            LogicalType::FixedList { .. } => LogicalTypeID::FIXED_LIST,
+            LogicalType::Struct { .. } => LogicalTypeID::STRUCT,
+            LogicalType::Node => LogicalTypeID::NODE,
+            LogicalType::Rel => LogicalTypeID::REL,
         }
     }
 }
@@ -253,22 +270,76 @@ pub enum Value {
     /// <https://kuzudb.com/docs/cypher/data-types/list.html>
     FixedList(LogicalType, Vec<Value>),
     /// <https://kuzudb.com/docs/cypher/data-types/struct.html>
-    Struct(HashMap<String, Value>),
+    Struct(Vec<(String, Value)>),
     Node(Box<NodeValue>),
     Rel(Box<RelValue>),
 }
 
-/*
- * Independent implementation with conversion generally seems easier, and allows the use of a more rust-like
- * interface with proper enums.
- */
-// TODO: Test that builtin Display matches c++ value to-string.
+// TODO: Test that builtin Display matches c++ value toString.
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Bool(true) => write!(f, "True"),
             Value::Bool(false) => write!(f, "False"),
-            x => write!(f, "{x}"),
+            Value::Int16(x) => write!(f, "{x}"),
+            Value::Int32(x) => write!(f, "{x}"),
+            Value::Int64(x) => write!(f, "{x}"),
+            Value::Date(x) => write!(f, "{x}"),
+            Value::String(x) => write!(f, "{x}"),
+            Value::Null(_) => write!(f, "null"),
+            Value::VarList(_, x) | Value::FixedList(_, x) => {
+                write!(f, "[")?;
+                for i in 0..x.len() {
+                    write!(f, "{}", x[i])?;
+                    if i != x.len() - 1 {
+                        write!(f, ",")?;
+                    }
+                }
+                write!(f, "]")
+            }
+            // Note: These don't match kuzu's toString, but we probably don't want them to
+            Value::Interval(x) => write!(f, "{x}"),
+            Value::Timestamp(x) => write!(f, "{x}"),
+            Value::Float(x) => write!(f, "{x}"),
+            Value::Double(x) => write!(f, "{x}"),
+            _ => unimplemented!(),
+        }
+    }
+}
+
+impl Into<LogicalType> for &Value {
+    fn into(self) -> LogicalType {
+        match self {
+            Value::Bool(_) => LogicalType::Bool,
+            Value::Int16(_) => LogicalType::Int16,
+            Value::Int32(_) => LogicalType::Int32,
+            Value::Int64(_) => LogicalType::Int64,
+            Value::Float(_) => LogicalType::Float,
+            Value::Double(_) => LogicalType::Double,
+            Value::Date(_) => LogicalType::Date,
+            Value::Interval(_) => LogicalType::Interval,
+            Value::Timestamp(_) => LogicalType::Timestamp,
+            Value::String(_) => LogicalType::String,
+            Value::Null(x) => x.clone(),
+            Value::VarList(x, _) => LogicalType::VarList {
+                child_type: Box::new(x.clone()),
+            },
+            Value::FixedList(x, value) => LogicalType::FixedList {
+                child_type: Box::new(x.clone()),
+                num_elements: value.len() as u64,
+            },
+            Value::Struct(values) => LogicalType::Struct {
+                fields: values
+                    .iter()
+                    .map(|(name, x)| {
+                        let typ: LogicalType = x.into();
+                        (name.clone(), typ)
+                    })
+                    .collect(),
+            },
+            Value::InternalID(_) => LogicalType::InternalID,
+            Value::Node(_) => LogicalType::Node,
+            Value::Rel(_) => LogicalType::Rel,
         }
     }
 }
@@ -339,21 +410,14 @@ impl TryFrom<&ffi::Value> for Value {
             LogicalTypeID::STRUCT => {
                 // Data is a list of field values in the value itself (same as list),
                 // with the field names stored in the DataType
-                let field_names = ffi::value_get_struct_names(value);
+                let field_names = ffi::logical_type_get_struct_field_names(
+                    ffi::value_get_data_type(value).as_ref().unwrap(),
+                );
                 let list = ffi::value_get_list(value);
-                let mut result = HashMap::new();
-                for index in 0..list.size() {
+                let mut result = vec![];
+                for (name, index) in field_names.into_iter().zip(0..list.size()) {
                     let value: Value = list.get(index).as_ref().unwrap().try_into()?;
-                    result.insert(
-                        field_names
-                            .as_ref()
-                            .unwrap()
-                            .get(index as usize)
-                            // Presumably an internal error if this panics?
-                            .unwrap()
-                            .to_string(),
-                        value,
-                    );
+                    result.push((name, value));
                 }
                 Ok(Value::Struct(result))
             }
@@ -378,7 +442,7 @@ impl TryInto<cxx::UniquePtr<ffi::Value>> for Value {
 
     fn try_into(self) -> Result<cxx::UniquePtr<ffi::Value>, Self::Error> {
         match self {
-            Value::Null(typ) => Ok(ffi::create_value_null(typ.id())),
+            Value::Null(typ) => Ok(ffi::create_value_null((&typ).into())),
             Value::Bool(value) => Ok(ffi::create_value_bool(value)),
             Value::Int16(value) => Ok(ffi::create_value_i16(value)),
             Value::Int32(value) => Ok(ffi::create_value_i32(value)),
@@ -436,6 +500,26 @@ impl TryInto<cxx::UniquePtr<ffi::Value>> for Value {
                     builder,
                 ))
             }
+            Value::Struct(value) => {
+                let typ: LogicalType = LogicalType::Struct {
+                    fields: value
+                        .iter()
+                        .map(|(name, value)| {
+                            // Unwrap is safe since we already converted when inserting into the
+                            // builder
+                            (name.clone(), Into::<LogicalType>::into(value))
+                        })
+                        .collect(),
+                };
+
+                let mut builder = ffi::create_list();
+                for (_, elem) in value {
+                    //builder.pin_mut().insert(Value::String(name).try_into()?);
+                    builder.pin_mut().insert(elem.try_into()?);
+                }
+
+                Ok(ffi::get_list_value((&typ).into(), builder))
+            }
             _ => unimplemented!(),
         }
     }
@@ -485,6 +569,7 @@ impl From<&str> for Value {
 
 #[cfg(test)]
 mod tests {
+    use crate::ffi::ffi;
     use crate::{
         connection::Connection,
         database::Database,
@@ -492,12 +577,139 @@ mod tests {
     };
     use anyhow::Result;
     use std::collections::HashSet;
+    use std::convert::TryInto;
     use std::iter::FromIterator;
     use time::macros::{date, datetime};
 
     // Note: Cargo runs tests in parallel by default, however kuzu does not support
     // working with multiple databases in parallel.
     // Tests can be run serially with `cargo test -- --test-threads=1` to work around this.
+
+    macro_rules! type_tests {
+        ($($name:ident: $value:expr,)*) => {
+        $(
+            #[test]
+            /// Tests that the values are correctly converted into kuzu::common::Value and back
+            fn $name() -> Result<()> {
+                let rust_type: LogicalType = $value;
+                let typ: cxx::UniquePtr<ffi::LogicalType> = (&rust_type).try_into()?;
+                let new_rust_type: LogicalType = typ.as_ref().unwrap().try_into()?;
+                assert_eq!(new_rust_type, rust_type);
+                Ok(())
+            }
+        )*
+        }
+    }
+
+    macro_rules! value_tests {
+        ($($name:ident: $value:expr,)*) => {
+        $(
+            #[test]
+            /// Tests that the values are correctly converted into kuzu::common::Value and back
+            fn $name() -> Result<()> {
+                let rust_value: Value = $value;
+                let value: cxx::UniquePtr<ffi::Value> = rust_value.clone().try_into()?;
+                //assert_eq!(ffi::value_to_string(value.as_ref().unwrap()), format!("{rust_value}"));
+                let new_rust_value: Value = value.as_ref().unwrap().try_into()?;
+                assert_eq!(new_rust_value, rust_value);
+                Ok(())
+            }
+        )*
+        }
+    }
+
+    macro_rules! database_tests {
+        ($($name:ident: $value:expr, $decl:expr,)*) => {
+        $(
+            #[test]
+            /// Tests that passing the values through the database returns what we put in
+            fn $name() -> Result<()> {
+                let temp_dir = tempdir::TempDir::new("example")?;
+                let mut db = Database::new(temp_dir.path(), 0)?;
+                let mut conn = Connection::new(&mut db)?;
+                conn.query(&format!(
+                    "CREATE NODE TABLE Person(name STRING, item {}, PRIMARY KEY(name));",
+                    $decl,
+                ))?;
+
+                let mut add_person =
+                    conn.prepare("CREATE (:Person {name: $name, item: $item});")?;
+                conn.execute(
+                    &mut add_person,
+                    vec![("name", "Bob".into()), ("item", $value)],
+                )?;
+                let result = conn
+                    .query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.item;")?
+                    .next()
+                    .unwrap();
+                // TODO: Test equivalence to value constructed inside a a query
+                assert_eq!(result[0], $value);
+                temp_dir.close()?;
+                Ok(())
+            }
+        )*
+        }
+    }
+
+    type_tests! {
+        convert_var_list_type: LogicalType::VarList { child_type: Box::new(LogicalType::String) },
+        convert_fixed_list_type: LogicalType::FixedList { child_type: Box::new(LogicalType::Int64), num_elements: 3 },
+        convert_int16_type: LogicalType::Int16,
+        convert_int32_type: LogicalType::Int32,
+        convert_int64_type: LogicalType::Int64,
+        convert_float_type: LogicalType::Float,
+        convert_double_type: LogicalType::Double,
+        convert_timestamp_type: LogicalType::Timestamp,
+        convert_date_type: LogicalType::Date,
+        convert_interval_type: LogicalType::Interval,
+        convert_string_type: LogicalType::String,
+        convert_bool_type: LogicalType::Bool,
+        convert_struct_type: LogicalType::Struct { fields: vec![("NAME".to_string(), LogicalType::String)]},
+    }
+
+    value_tests! {
+        convert_var_list: Value::VarList(LogicalType::String, vec!["Alice".into(), "Bob".into()]),
+        convert_var_list_empty: Value::VarList(LogicalType::String, vec![]),
+        convert_fixed_list: Value::FixedList(LogicalType::String, vec!["Alice".into(), "Bob".into()]),
+        convert_int16: Value::Int16(1),
+        convert_int32: Value::Int32(2),
+        convert_int64: Value::Int64(3),
+        convert_float: Value::Float(4.),
+        convert_double: Value::Double(5.),
+        convert_timestamp: Value::Timestamp(datetime!(2023-06-13 11:25:30 UTC)),
+        convert_date: Value::Date(date!(2023-06-13)),
+        convert_interval: Value::Interval(time::Duration::weeks(10)),
+        convert_string: Value::String("Hello World".to_string()),
+        convert_bool: Value::Bool(false),
+        convert_null: Value::Null(LogicalType::VarList {
+            child_type: Box::new(LogicalType::FixedList { child_type: Box::new(LogicalType::Int16), num_elements: 3 })
+        }),
+        convert_struct: Value::Struct(vec![("NAME".to_string(), "Alice".into()), ("AGE".to_string(), 25.into())]),
+    }
+
+    database_tests! {
+        // Passing these values as arguments is not yet implemented in kuzu:
+        // db_struct:
+        //    Value::Struct(vec![("item".to_string(), "Knife".into()), ("count".to_string(), 1.into())]),
+        //    "STRUCT(item STRING, count INT32)",
+        // db_fixed_list: Value::FixedList(LogicalType::String, vec!["Alice".into(), "Bob".into()]), "STRING[2]",
+        db_var_list_string: Value::VarList(LogicalType::String, vec!["Alice".into(), "Bob".into()]), "STRING[]",
+        db_var_list_int: Value::VarList(LogicalType::Int64, vec![0i64.into(), 1i64.into(), 2i64.into()]), "INT64[]",
+        db_int16: Value::Int16(1), "INT16",
+        db_int32: Value::Int32(2), "INT32",
+        db_int64: Value::Int64(3), "INT64",
+        db_float: Value::Float(4.), "FLOAT",
+        db_double: Value::Double(5.), "DOUBLE",
+        db_timestamp: Value::Timestamp(datetime!(2023-06-13 11:25:30 UTC)), "TIMESTAMP",
+        db_date: Value::Date(date!(2023-06-13)), "DATE",
+        db_interval: Value::Interval(time::Duration::weeks(200)), "INTERVAL",
+        db_string: Value::String("Hello World".to_string()), "STRING",
+        db_bool: Value::Bool(true), "BOOLEAN",
+        // Causes buffer manager failure
+        // db_null: Value::Null(LogicalType::VarList {
+        //    child_type: Box::new(LogicalType::FixedList { child_type: Box::new(LogicalType::Int16), num_elements: 3 })
+        // }), "INT16[3][]",
+    }
 
     #[test]
     /// Tests that the list value is correctly constructed
@@ -512,38 +724,6 @@ mod tests {
                 Value::VarList(LogicalType::String, vec!["Alice".into(), "Bob".into(),])
             );
         }
-        temp_dir.close()?;
-        Ok(())
-    }
-
-    #[test]
-    /// Tests that the list value is correctly constructed
-    fn test_var_list_create() -> Result<()> {
-        let temp_dir = tempdir::TempDir::new("example")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
-        conn.query("CREATE NODE TABLE Person(name STRING, pockets STRING[], PRIMARY KEY(name));")?;
-        let mut add_person = conn.prepare("CREATE (:Person {name: $name, pockets: $pockets});")?;
-        conn.query("CREATE (:Person {name: \"Alice\", pockets: [\"String\", \"Hankerchief\"]});")?;
-
-        conn.execute(
-            &mut add_person,
-            vec![
-                ("name", "Bob".into()),
-                (
-                    "pockets",
-                    Value::VarList(LogicalType::String, vec!["Knife".into(), "Ring".into()]),
-                ),
-            ],
-        )?;
-        let result = conn
-            .query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.pockets;")?
-            .next()
-            .unwrap();
-        assert_eq!(
-            result[0],
-            Value::VarList(LogicalType::String, vec!["Knife".into(), "Ring".into()])
-        );
         temp_dir.close()?;
         Ok(())
     }
@@ -597,62 +777,6 @@ mod tests {
     }
 
     #[test]
-    /// Test that the date round-trips through kuzu's internal date
-    fn test_date() -> Result<()> {
-        let temp_dir = tempdir::TempDir::new("example")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
-        conn.query("CREATE NODE TABLE Person(name STRING, registerDate DATE, PRIMARY KEY(name));")?;
-        let mut add_person =
-            conn.prepare("CREATE (:Person {name: $name, registerDate: $date});")?;
-        let date = date!(2011 - 08 - 20);
-        conn.execute(
-            &mut add_person,
-            vec![("name", "Bob".into()), ("date", Value::Date(date))],
-        )?;
-        let mut result =
-            conn.query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.registerDate;")?;
-        let result: time::Date = if let Value::Date(date) = result.next().unwrap()[0] {
-            date
-        } else {
-            panic!("Expected a Date Value")
-        };
-        assert_eq!(result, date);
-        temp_dir.close()?;
-        Ok(())
-    }
-
-    #[test]
-    /// Test that the date round-trips through kuzu's internal date
-    fn test_interval() -> Result<()> {
-        use time::Duration;
-        let temp_dir = tempdir::TempDir::new("example")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
-        conn.query("CREATE NODE TABLE Person(name STRING, interval INTERVAL, PRIMARY KEY(name));")?;
-        let mut add_person =
-            conn.prepare("CREATE (:Person {name: $name, interval: $interval});")?;
-        let interval = Duration::weeks(3);
-        conn.execute(
-            &mut add_person,
-            vec![
-                ("name", "Bob".into()),
-                ("interval", Value::Interval(interval)),
-            ],
-        )?;
-        let mut result =
-            conn.query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.interval;")?;
-        let result: Duration = if let Value::Interval(interval) = result.next().unwrap()[0] {
-            interval
-        } else {
-            panic!("Expected an Interval Value")
-        };
-        assert_eq!(result, interval);
-        temp_dir.close()?;
-        Ok(())
-    }
-
-    #[test]
     /// Test that null values are read correctly by the API
     fn test_null() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example")?;
@@ -664,33 +788,4 @@ mod tests {
         temp_dir.close()?;
         Ok(())
     }
-
-    /*
-    #[test]
-    /// Test that null values can be passed to kuzu
-    fn test_null_data() -> Result<()> {
-        use time::Duration;
-        let temp_dir = tempdir::TempDir::new("example")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
-        conn.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
-        let mut add_person = conn.prepare("CREATE (:Person {name: $name, age: $age});")?;
-
-        conn.execute(
-            &mut add_person,
-            &[
-                ("name", "Bob".into()),
-                ("age", Value::Null(LogicalType::Int64)),
-            ],
-        )?;
-
-        let result = conn
-            .query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.age")?
-            .next();
-        let result = &result.unwrap()[0];
-        assert_eq!(result, &Value::Null(LogicalType::Int64));
-        temp_dir.close()?;
-        Ok(())
-    }
-    */
 }
