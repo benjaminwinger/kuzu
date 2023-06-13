@@ -129,7 +129,7 @@ impl<'a> Connection<'a> {
     ///            See <https://kuzudb.com/docs/cypher> for details on the query format
     pub fn query(&mut self, query: &str) -> Result<QueryResult, Error> {
         let mut statement = self.prepare(query)?;
-        self.execute(&mut statement, &[])
+        self.execute(&mut statement, vec![])
     }
 
     /// Executes the given prepared statement with args and returns the result.
@@ -139,47 +139,15 @@ impl<'a> Connection<'a> {
     pub fn execute(
         &mut self,
         prepared_statement: &mut PreparedStatement,
-        params: &[(&str, Value)],
+        params: Vec<(&str, Value)>,
     ) -> Result<QueryResult, Error> {
         // Passing and converting Values in a collection across the ffi boundary is difficult
         // (std::vector cannot be constructed from rust, Vec cannot contain opaque C++ types)
         // So we create an opaque parameter pack and copy the parameters into it one by one
         let mut cxx_params = ffi::new_params();
         for (key, value) in params {
-            match value {
-                Value::Null(typ) => cxx_params.pin_mut().insert_null(key, typ.id()),
-                Value::Bool(value) => cxx_params.pin_mut().insert_bool(key, *value),
-                Value::Int16(value) => cxx_params.pin_mut().insert_i16(key, *value),
-                Value::Int32(value) => cxx_params.pin_mut().insert_i32(key, *value),
-                Value::Int64(value) => cxx_params.pin_mut().insert_i64(key, *value),
-                Value::Float(value) => cxx_params.pin_mut().insert_float(key, *value),
-                Value::Double(value) => cxx_params.pin_mut().insert_double(key, *value),
-                Value::String(value) => cxx_params.pin_mut().insert_string(key, value),
-                Value::Timestamp(value) => cxx_params
-                    .pin_mut()
-                    // Convert to microseconds since 1970-01-01
-                    .insert_timestamp(key, (value.unix_timestamp_nanos() / 1000) as i64),
-                Value::Date(value) => cxx_params
-                    .pin_mut()
-                    // Convert to days since 1970-01-01
-                    .insert_date(
-                        key,
-                        (*value - time::Date::from_ordinal_date(1970, 1).unwrap()).whole_days(),
-                    ),
-                Value::Interval(value) => {
-                    use time::Duration;
-                    let mut interval = *value;
-                    let months = interval.whole_days() / 30;
-                    interval -= Duration::days(months * 30);
-                    let days = interval.whole_days();
-                    interval -= Duration::days(days);
-                    let micros = interval.whole_microseconds() as i64;
-                    cxx_params
-                        .pin_mut()
-                        .insert_interval(key, months as i32, days as i32, micros)
-                }
-                _ => unimplemented!(),
-            }
+            let ffi_value: cxx::UniquePtr<ffi::Value> = value.try_into()?;
+            cxx_params.pin_mut().insert(key, ffi_value);
         }
         let result = ffi::connection_execute(
             self.conn.pin_mut(),
@@ -302,7 +270,7 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
         conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;
 
         let mut statement = conn.prepare("MATCH (a:Person) WHERE a.age = $age RETURN a.name;")?;
-        for result in conn.execute(&mut statement, &[("age", Value::Int16(25))])? {
+        for result in conn.execute(&mut statement, vec![("age", Value::Int16(25))])? {
             assert_eq!(result.len(), 1);
             assert_eq!(result[0], Value::String("Alice".to_string()));
         }
@@ -321,7 +289,10 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
 
         let mut statement = conn.prepare("MATCH (a:Person) WHERE a.age = $age RETURN a.name;")?;
         let result: Error = conn
-            .execute(&mut statement, &[("age", Value::String("25".to_string()))])
+            .execute(
+                &mut statement,
+                vec![("age", Value::String("25".to_string()))],
+            )
             .expect_err("Age should be an int16!")
             .into();
         assert_eq!(

@@ -54,24 +54,7 @@ pub(crate) mod ffi {
         // Simple types which cross the ffi without problems
         // Non-copyable types are references so that they only need to be cloned on the
         // C++ side of things
-        #[rust_name = "insert_bool"]
-        fn insert(self: Pin<&mut Self>, key: &str, value: bool);
-        #[rust_name = "insert_i16"]
-        fn insert(self: Pin<&mut Self>, key: &str, value: i16);
-        #[rust_name = "insert_i32"]
-        fn insert(self: Pin<&mut Self>, key: &str, value: i32);
-        #[rust_name = "insert_i64"]
-        fn insert(self: Pin<&mut Self>, key: &str, value: i64);
-        #[rust_name = "insert_float"]
-        fn insert(self: Pin<&mut Self>, key: &str, value: f32);
-        #[rust_name = "insert_double"]
-        fn insert(self: Pin<&mut Self>, key: &str, value: f64);
-
-        fn insert_string(self: Pin<&mut Self>, key: &str, value: &String);
-        fn insert_timestamp(self: Pin<&mut Self>, key: &str, value: i64);
-        fn insert_date(self: Pin<&mut Self>, key: &str, value: i64);
-        fn insert_interval(self: Pin<&mut Self>, key: &str, months: i32, days: i32, micros: i64);
-        fn insert_null(self: Pin<&mut Self>, key: &str, typ: LogicalTypeID);
+        fn insert(self: Pin<&mut Self>, key: &str, value: UniquePtr<Value>);
 
         fn new_params() -> UniquePtr<QueryParams>;
     }
@@ -153,6 +136,40 @@ pub(crate) mod ffi {
     #[namespace = "kuzu_rs"]
     unsafe extern "C++" {
         #[namespace = "kuzu::common"]
+        type LogicalType;
+
+        #[namespace = "kuzu::common"]
+        fn getLogicalTypeID(&self) -> LogicalTypeID;
+
+        fn create_logical_type(id: LogicalTypeID) -> UniquePtr<LogicalType>;
+        fn create_logical_type_var_list(
+            child_type: UniquePtr<LogicalType>,
+        ) -> UniquePtr<LogicalType>;
+        fn create_logical_type_fixed_list(
+            child_type: UniquePtr<LogicalType>,
+            num_elements: u64,
+        ) -> UniquePtr<LogicalType>;
+
+        fn logical_type_get_var_list_child_type(value: &LogicalType) -> &LogicalType;
+        fn logical_type_get_fixed_list_child_type(value: &LogicalType) -> &LogicalType;
+        fn logical_type_get_fixed_list_num_elements(value: &LogicalType) -> u64;
+    }
+
+    #[namespace = "kuzu_rs"]
+    unsafe extern "C++" {
+        type ValueListBuilder;
+
+        fn insert(self: Pin<&mut ValueListBuilder>, value: UniquePtr<Value>);
+        fn get_list_value(
+            typ: UniquePtr<LogicalType>,
+            value: UniquePtr<ValueListBuilder>,
+        ) -> UniquePtr<Value>;
+        fn create_list() -> UniquePtr<ValueListBuilder>;
+    }
+
+    #[namespace = "kuzu_rs"]
+    unsafe extern "C++" {
+        #[namespace = "kuzu::common"]
         type Value;
 
         fn value_to_string(node_value: &Value) -> String;
@@ -180,8 +197,28 @@ pub(crate) mod ffi {
         fn value_get_struct_names(value: &Value) -> UniquePtr<CxxVector<CxxString>>;
 
         fn value_get_data_type_id(value: &Value) -> LogicalTypeID;
+        fn value_get_data_type(value: &Value) -> UniquePtr<LogicalType>;
 
         fn isNull(&self) -> bool;
+
+        #[rust_name = "create_value_bool"]
+        fn create_value(value: bool) -> UniquePtr<Value>;
+        #[rust_name = "create_value_i16"]
+        fn create_value(value: i16) -> UniquePtr<Value>;
+        #[rust_name = "create_value_i32"]
+        fn create_value(value: i32) -> UniquePtr<Value>;
+        #[rust_name = "create_value_i64"]
+        fn create_value(value: i64) -> UniquePtr<Value>;
+        #[rust_name = "create_value_float"]
+        fn create_value(value: f32) -> UniquePtr<Value>;
+        #[rust_name = "create_value_double"]
+        fn create_value(value: f64) -> UniquePtr<Value>;
+
+        fn create_value_null(typ: LogicalTypeID) -> UniquePtr<Value>;
+        fn create_value_string(value: &String) -> UniquePtr<Value>;
+        fn create_value_timestamp(value: i64) -> UniquePtr<Value>;
+        fn create_value_date(value: i64) -> UniquePtr<Value>;
+        fn create_value_interval(months: i32, days: i32, micros: i64) -> UniquePtr<Value>;
     }
 
     unsafe extern "C++" {

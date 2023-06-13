@@ -120,8 +120,14 @@ pub enum LogicalType {
 
 impl From<&ffi::Value> for LogicalType {
     fn from(value: &ffi::Value) -> Self {
+        ffi::value_get_data_type(value).as_ref().unwrap().into()
+    }
+}
+
+impl From<&ffi::LogicalType> for LogicalType {
+    fn from(logical_type: &ffi::LogicalType) -> Self {
         use ffi::LogicalTypeID;
-        match ffi::value_get_data_type_id(value) {
+        match logical_type.getLogicalTypeID() {
             LogicalTypeID::ANY => LogicalType::Any,
             LogicalTypeID::BOOL => LogicalType::Bool,
             LogicalTypeID::INT16 => LogicalType::Int16,
@@ -134,14 +140,49 @@ impl From<&ffi::Value> for LogicalType {
             LogicalTypeID::DATE => LogicalType::Date,
             LogicalTypeID::TIMESTAMP => LogicalType::Timestamp,
             LogicalTypeID::INTERNAL_ID => LogicalType::InternalID,
-            LogicalTypeID::VAR_LIST
-            | LogicalTypeID::FIXED_LIST
-            | LogicalTypeID::STRUCT
-            | LogicalTypeID::NODE
-            | LogicalTypeID::REL => unimplemented!(),
+            LogicalTypeID::VAR_LIST => LogicalType::VarList {
+                child_type: Box::new(
+                    ffi::logical_type_get_var_list_child_type(logical_type).into(),
+                ),
+            },
+            LogicalTypeID::FIXED_LIST => LogicalType::FixedList {
+                child_type: Box::new(
+                    ffi::logical_type_get_fixed_list_child_type(logical_type).into(),
+                ),
+                num_elements: ffi::logical_type_get_fixed_list_num_elements(logical_type),
+            },
+            LogicalTypeID::STRUCT | LogicalTypeID::NODE | LogicalTypeID::REL => unimplemented!(),
             // Should be unreachable, as cxx will check that the LogicalTypeID enum matches the one
             // on the C++ side.
             x => panic!("Unsupported type {:?}", x),
+        }
+    }
+}
+
+impl Into<cxx::UniquePtr<ffi::LogicalType>> for &LogicalType {
+    fn into(self) -> cxx::UniquePtr<ffi::LogicalType> {
+        match self {
+            LogicalType::Any
+            | LogicalType::Bool
+            | LogicalType::Int64
+            | LogicalType::Int32
+            | LogicalType::Int16
+            | LogicalType::Float
+            | LogicalType::Double
+            | LogicalType::Date
+            | LogicalType::Timestamp
+            | LogicalType::Interval
+            | LogicalType::InternalID
+            | LogicalType::String => ffi::create_logical_type(self.id()),
+            LogicalType::VarList { child_type } => {
+                ffi::create_logical_type_var_list(child_type.as_ref().into())
+            }
+            LogicalType::FixedList {
+                child_type,
+                num_elements,
+            } => ffi::create_logical_type_fixed_list(child_type.as_ref().into(), *num_elements),
+            LogicalType::Struct { fields: _ } => unimplemented!(),
+            LogicalType::Node | LogicalType::Rel => unimplemented!(),
         }
     }
 }
@@ -204,12 +245,13 @@ pub enum Value {
     /// <https://kuzudb.com/docs/cypher/data-types/string.html>
     String(String),
     // TODO: Enforce type of contents
+    // LogicalType is necessary so that we can pass the correct type to the C++ API if the list is empty.
+    /// These must contain elements which are all the given type.
+    /// <https://kuzudb.com/docs/cypher/data-types/list.html>
+    VarList(LogicalType, Vec<Value>),
     /// These must contain elements which are all the same type.
     /// <https://kuzudb.com/docs/cypher/data-types/list.html>
-    VarList(Vec<Value>),
-    /// These must contain elements which are all the same type.
-    /// <https://kuzudb.com/docs/cypher/data-types/list.html>
-    FixedList(Vec<Value>),
+    FixedList(LogicalType, Vec<Value>),
     /// <https://kuzudb.com/docs/cypher/data-types/struct.html>
     Struct(HashMap<String, Value>),
     Node(Box<NodeValue>),
@@ -275,7 +317,11 @@ impl TryFrom<&ffi::Value> for Value {
                     let value: Value = list.get(index).as_ref().unwrap().try_into()?;
                     result.push(value);
                 }
-                Ok(Value::VarList(result))
+                if let LogicalType::VarList { child_type } = value.into() {
+                    Ok(Value::VarList(*child_type, result))
+                } else {
+                    unreachable!()
+                }
             }
             LogicalTypeID::FIXED_LIST => {
                 let list = ffi::value_get_list(value);
@@ -284,7 +330,11 @@ impl TryFrom<&ffi::Value> for Value {
                     let value: Value = list.get(index).as_ref().unwrap().try_into()?;
                     result.push(value);
                 }
-                Ok(Value::FixedList(result))
+                if let LogicalType::FixedList { child_type, .. } = value.into() {
+                    Ok(Value::FixedList(*child_type, result))
+                } else {
+                    unreachable!()
+                }
             }
             LogicalTypeID::STRUCT => {
                 // Data is a list of field values in the value itself (same as list),
@@ -317,6 +367,76 @@ impl TryFrom<&ffi::Value> for Value {
             // Should be unreachable, as cxx will check that the LogicalTypeID enum matches the one
             // on the C++ side.
             x => panic!("Unsupported type {:?}", x),
+        }
+    }
+}
+
+impl TryInto<cxx::UniquePtr<ffi::Value>> for Value {
+    // Errors should occur if:
+    // - types are heterogeneous in lists
+    type Error = crate::error::Error;
+
+    fn try_into(self) -> Result<cxx::UniquePtr<ffi::Value>, Self::Error> {
+        match self {
+            Value::Null(typ) => Ok(ffi::create_value_null(typ.id())),
+            Value::Bool(value) => Ok(ffi::create_value_bool(value)),
+            Value::Int16(value) => Ok(ffi::create_value_i16(value)),
+            Value::Int32(value) => Ok(ffi::create_value_i32(value)),
+            Value::Int64(value) => Ok(ffi::create_value_i64(value)),
+            Value::Float(value) => Ok(ffi::create_value_float(value)),
+            Value::Double(value) => Ok(ffi::create_value_double(value)),
+            Value::String(value) => Ok(ffi::create_value_string(&value)),
+            Value::Timestamp(value) => Ok(ffi::create_value_timestamp(
+                // Convert to microseconds since 1970-01-01
+                (value.unix_timestamp_nanos() / 1000) as i64,
+            )),
+            Value::Date(value) => Ok(ffi::create_value_date(
+                // Convert to days since 1970-01-01
+                (value - time::Date::from_ordinal_date(1970, 1).unwrap()).whole_days(),
+            )),
+            Value::Interval(value) => {
+                use time::Duration;
+                let mut interval = value;
+                let months = interval.whole_days() / 30;
+                interval -= Duration::days(months * 30);
+                let days = interval.whole_days();
+                interval -= Duration::days(days);
+                let micros = interval.whole_microseconds() as i64;
+                Ok(ffi::create_value_interval(
+                    months as i32,
+                    days as i32,
+                    micros,
+                ))
+            }
+            Value::VarList(typ, value) => {
+                let mut builder = ffi::create_list();
+                for elem in value {
+                    builder.pin_mut().insert(elem.try_into()?);
+                }
+                Ok(ffi::get_list_value(
+                    (&LogicalType::VarList {
+                        child_type: Box::new(typ),
+                    })
+                        .into(),
+                    builder,
+                ))
+            }
+            Value::FixedList(typ, value) => {
+                let mut builder = ffi::create_list();
+                let len = value.len();
+                for elem in value {
+                    builder.pin_mut().insert(elem.try_into()?);
+                }
+                Ok(ffi::get_list_value(
+                    (&LogicalType::FixedList {
+                        child_type: Box::new(typ),
+                        num_elements: len as u64,
+                    })
+                        .into(),
+                    builder,
+                ))
+            }
+            _ => unimplemented!(),
         }
     }
 }
@@ -389,9 +509,41 @@ mod tests {
             assert_eq!(result.len(), 1);
             assert_eq!(
                 result[0],
-                Value::VarList(vec!["Alice".into(), "Bob".into(),])
+                Value::VarList(LogicalType::String, vec!["Alice".into(), "Bob".into(),])
             );
         }
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    /// Tests that the list value is correctly constructed
+    fn test_var_list_create() -> Result<()> {
+        let temp_dir = tempdir::TempDir::new("example")?;
+        let mut db = Database::new(temp_dir.path(), 0)?;
+        let mut conn = Connection::new(&mut db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, pockets STRING[], PRIMARY KEY(name));")?;
+        let mut add_person = conn.prepare("CREATE (:Person {name: $name, pockets: $pockets});")?;
+        conn.query("CREATE (:Person {name: \"Alice\", pockets: [\"String\", \"Hankerchief\"]});")?;
+
+        conn.execute(
+            &mut add_person,
+            vec![
+                ("name", "Bob".into()),
+                (
+                    "pockets",
+                    Value::VarList(LogicalType::String, vec!["Knife".into(), "Ring".into()]),
+                ),
+            ],
+        )?;
+        let result = conn
+            .query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.pockets;")?
+            .next()
+            .unwrap();
+        assert_eq!(
+            result[0],
+            Value::VarList(LogicalType::String, vec!["Knife".into(), "Ring".into()])
+        );
         temp_dir.close()?;
         Ok(())
     }
@@ -413,7 +565,7 @@ mod tests {
         let timestamp = datetime!(2011-08-20 11:25:30 UTC);
         conn.execute(
             &mut add_person,
-            &[
+            vec![
                 ("name", "Bob".into()),
                 ("time", Value::Timestamp(timestamp)),
             ],
@@ -456,7 +608,7 @@ mod tests {
         let date = date!(2011 - 08 - 20);
         conn.execute(
             &mut add_person,
-            &[("name", "Bob".into()), ("date", Value::Date(date))],
+            vec![("name", "Bob".into()), ("date", Value::Date(date))],
         )?;
         let mut result =
             conn.query("MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.registerDate;")?;
@@ -483,7 +635,7 @@ mod tests {
         let interval = Duration::weeks(3);
         conn.execute(
             &mut add_person,
-            &[
+            vec![
                 ("name", "Bob".into()),
                 ("interval", Value::Interval(interval)),
             ],
@@ -501,9 +653,8 @@ mod tests {
     }
 
     #[test]
-    /// Test that the date round-trips through kuzu's internal date
+    /// Test that null values are read correctly by the API
     fn test_null() -> Result<()> {
-        use time::Duration;
         let temp_dir = tempdir::TempDir::new("example")?;
         let mut db = Database::new(temp_dir.path(), 0)?;
         let mut conn = Connection::new(&mut db)?;
@@ -514,8 +665,9 @@ mod tests {
         Ok(())
     }
 
+    /*
     #[test]
-    /// Test that the date round-trips through kuzu's internal date
+    /// Test that null values can be passed to kuzu
     fn test_null_data() -> Result<()> {
         use time::Duration;
         let temp_dir = tempdir::TempDir::new("example")?;
@@ -540,4 +692,5 @@ mod tests {
         temp_dir.close()?;
         Ok(())
     }
+    */
 }

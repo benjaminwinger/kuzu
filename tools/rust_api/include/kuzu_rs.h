@@ -15,42 +15,29 @@ namespace kuzu_rs {
 struct QueryParams {
     std::unordered_map<std::string, std::shared_ptr<kuzu::common::Value>> inputParams;
 
-    // TODO: Should take a DataType, not a DataTypeID. This won't work for compound types
-    void insert_null(const rust::Str key, kuzu::common::LogicalTypeID typ) {
-        inputParams.insert(std::make_pair(
-            key, std::make_shared<kuzu::common::Value>(
-                     kuzu::common::Value::createNullValue(kuzu::common::LogicalType(typ)))));
-    }
-    template<typename T>
-    void insert(const rust::Str key, const T value) {
-        inputParams.insert(std::make_pair(key, std::make_shared<kuzu::common::Value>(value)));
-    }
-    void insert_string(const rust::Str key, const rust::String& value) {
-        inputParams.insert(
-            std::make_pair(key, std::make_shared<kuzu::common::Value>(std::string(value))));
-    }
-
-    void insert_timestamp(const rust::Str key, const int64_t timestamp) {
-        inputParams.insert(std::make_pair(
-            key, std::make_shared<kuzu::common::Value>(kuzu::common::timestamp_t(timestamp))));
-    }
-    void insert_date(const rust::Str key, const int64_t date) {
-        inputParams.insert(
-            std::make_pair(key, std::make_shared<kuzu::common::Value>(kuzu::common::date_t(date))));
-    }
-
-    void insert_interval(
-        const rust::Str key, const int32_t months, const int32_t days, const int64_t micros) {
-        inputParams.insert(std::make_pair(key,
-            std::make_shared<kuzu::common::Value>(kuzu::common::interval_t(months, days, micros))));
+    void insert(const rust::Str key, std::unique_ptr<kuzu::common::Value> value) {
+        inputParams.insert(std::make_pair(key, std::move(value)));
     }
 };
 
 std::unique_ptr<QueryParams> new_params();
 
+std::unique_ptr<kuzu::common::LogicalType> create_logical_type(kuzu::common::LogicalTypeID id);
+std::unique_ptr<kuzu::common::LogicalType> create_logical_type_var_list(
+    std::unique_ptr<kuzu::common::LogicalType> childType);
+std::unique_ptr<kuzu::common::LogicalType> create_logical_type_fixed_list(
+    std::unique_ptr<kuzu::common::LogicalType> childType, uint64_t numElements);
+
+const kuzu::common::LogicalType& logical_type_get_var_list_child_type(
+    const kuzu::common::LogicalType& logicalType);
+const kuzu::common::LogicalType& logical_type_get_fixed_list_child_type(
+    const kuzu::common::LogicalType& logicalType);
+uint64_t logical_type_get_fixed_list_num_elements(const kuzu::common::LogicalType& logicalType);
+
 // Simple wrapper for vector of unique_ptr since cxx doesn't support functions returning a vector of
 // unique_ptr
 struct ValueList {
+    ValueList(const std::vector<std::unique_ptr<kuzu::common::Value>>& values) : values(values) {}
     const std::vector<std::unique_ptr<kuzu::common::Value>>& values;
     uint64_t size() const { return values.size(); }
     const std::unique_ptr<kuzu::common::Value>& get(uint64_t index) const { return values[index]; }
@@ -91,6 +78,30 @@ std::array<uint64_t, 2> value_get_internal_id(const kuzu::common::Value& value);
 std::unique_ptr<ValueList> value_get_list(const kuzu::common::Value& value);
 std::unique_ptr<std::vector<std::string>> value_get_struct_names(const kuzu::common::Value& value);
 kuzu::common::LogicalTypeID value_get_data_type_id(const kuzu::common::Value& value);
+std::unique_ptr<kuzu::common::LogicalType> value_get_data_type(const kuzu::common::Value& value);
 rust::String value_to_string(const kuzu::common::Value& val);
+
+std::unique_ptr<kuzu::common::Value> create_value_string(const rust::String& value);
+std::unique_ptr<kuzu::common::Value> create_value_timestamp(const int64_t timestamp);
+std::unique_ptr<kuzu::common::Value> create_value_date(const int64_t date);
+std::unique_ptr<kuzu::common::Value> create_value_interval(
+    const int32_t months, const int32_t days, const int64_t micros);
+// TODO: Should take a DataType, not a DataTypeID. This won't work for compound types
+std::unique_ptr<kuzu::common::Value> create_value_null(kuzu::common::LogicalTypeID typ);
+
+template<typename T>
+std::unique_ptr<kuzu::common::Value> create_value(const T value) {
+    return std::make_unique<kuzu::common::Value>(value);
+}
+
+struct ValueListBuilder {
+    std::vector<std::unique_ptr<kuzu::common::Value>> values;
+
+    void insert(std::unique_ptr<kuzu::common::Value> value) { values.push_back(std::move(value)); }
+};
+
+std::unique_ptr<kuzu::common::Value> get_list_value(
+    std::unique_ptr<kuzu::common::LogicalType> typ, std::unique_ptr<ValueListBuilder> value);
+std::unique_ptr<ValueListBuilder> create_list();
 
 } // namespace kuzu_rs
