@@ -8,8 +8,8 @@
 //! # fn main() -> Result<(), Error> {
 //! # let temp_dir = tempdir::TempDir::new("example")?;
 //! # let path = temp_dir.path();
-//! let mut db = Database::new(path, 0)?;
-//! let mut conn = Connection::new(&mut db)?;
+//! let db = Database::new(path, 0)?;
+//! let conn = Connection::new(&db)?;
 //! conn.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
 //! conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
 //! conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;

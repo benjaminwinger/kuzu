@@ -86,8 +86,8 @@ pub struct PreparedStatement {
 /// # fn main() -> Result<(), Error> {
 /// # let temp_dir = tempdir::TempDir::new("example")?;
 /// # let path = temp_dir.path();
-/// let mut db = Database::new(path, 0)?;
-/// let mut conn = Connection::new(&mut db)?;
+/// let db = Database::new(path, 0)?;
+/// let conn = Connection::new(&db)?;
 /// /// AUTO_COMMIT mode
 /// conn.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
 /// conn.begin_write_transaction()?;
@@ -110,8 +110,8 @@ pub struct PreparedStatement {
 /// # fn main() -> Result<(), Error> {
 /// # let temp_dir = tempdir::TempDir::new("example")?;
 /// # let path = temp_dir.path();
-/// let mut db = Database::new(path, 0)?;
-/// let mut conn = Connection::new(&mut db)?;
+/// let db = Database::new(path, 0)?;
+/// let conn = Connection::new(&db)?;
 /// /// AUTO_COMMIT mode
 /// conn.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
 /// conn.begin_write_transaction()?;
@@ -128,7 +128,7 @@ pub struct PreparedStatement {
 /// ```
 pub struct Connection<'a> {
     // bmwinger: Access to the underlying value for synchronized functions can be done
-    // with (&mut *self.conn.get()).pin_mut()
+    // with (*self.conn.get()).pin_mut()
     // Turning this into a function just causes lifetime issues.
     conn: UnsafeCell<UniquePtr<ffi::Connection<'a>>>,
 }
@@ -163,7 +163,7 @@ impl<'a> Connection<'a> {
 
     /// Returns the maximum number of threads used for execution in the current connection
     pub fn get_max_num_threads_for_exec(&self) -> u64 {
-        unsafe { (&mut *self.conn.get()).pin_mut().getMaxNumThreadForExec() }
+        unsafe { (*self.conn.get()).pin_mut().getMaxNumThreadForExec() }
     }
 
     /// Prepares the given query and returns the prepared statement.
@@ -173,7 +173,7 @@ impl<'a> Connection<'a> {
     ///            See <https://kuzudb.com/docs/cypher> for details on the query format
     pub fn prepare(&self, query: &str) -> Result<PreparedStatement, Error> {
         let_cxx_string!(query = query);
-        let statement = unsafe { (&mut *self.conn.get()).pin_mut() }.prepare(&query)?;
+        let statement = unsafe { (*self.conn.get()).pin_mut() }.prepare(&query)?;
         if statement.isSuccess() {
             Ok(PreparedStatement { statement })
         } else {
@@ -225,7 +225,7 @@ impl<'a> Connection<'a> {
             let ffi_value: cxx::UniquePtr<ffi::Value> = value.try_into()?;
             cxx_params.pin_mut().insert(key, ffi_value);
         }
-        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
+        let conn = unsafe { (*self.conn.get()).pin_mut() };
         let result =
             ffi::connection_execute(conn, prepared_statement.statement.pin_mut(), cxx_params)?;
         if !result.isSuccess() {
@@ -239,31 +239,31 @@ impl<'a> Connection<'a> {
 
     /// Manually starts a new read-only transaction in the current connection
     pub fn begin_read_only_transaction(&self) -> Result<(), Error> {
-        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
+        let conn = unsafe { (*self.conn.get()).pin_mut() };
         Ok(conn.beginReadOnlyTransaction()?)
     }
 
     /// Manually starts a new write transaction in the current connection
     pub fn begin_write_transaction(&self) -> Result<(), Error> {
-        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
+        let conn = unsafe { (*self.conn.get()).pin_mut() };
         Ok(conn.beginWriteTransaction()?)
     }
 
     /// Manually commits the current transaction
     pub fn commit(&self) -> Result<(), Error> {
-        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
+        let conn = unsafe { (*self.conn.get()).pin_mut() };
         Ok(conn.commit()?)
     }
 
     /// Manually rolls back the current transaction
     pub fn rollback(&self) -> Result<(), Error> {
-        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
+        let conn = unsafe { (*self.conn.get()).pin_mut() };
         Ok(conn.rollback()?)
     }
 
     /// Interrupts all queries currently executing within this connection
     pub fn interrupt(&self) -> Result<(), Error> {
-        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
+        let conn = unsafe { (*self.conn.get()).pin_mut() };
         Ok(conn.interrupt()?)
     }
 

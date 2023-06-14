@@ -10,12 +10,18 @@ pub struct QueryResult {
 }
 
 // Should be safe to move across threads, however access is not synchronized
-unsafe impl<'a> Send for ffi::QueryResult {}
+unsafe impl Send for ffi::QueryResult {}
 
 pub struct CSVOptions {
     delimiter: char,
     escape_character: char,
     newline: char,
+}
+
+impl Default for CSVOptions {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CSVOptions {
@@ -26,7 +32,6 @@ impl CSVOptions {
             newline: '\n',
         }
     }
-
     pub fn delimiter(mut self, delimiter: char) -> Self {
         self.delimiter = delimiter;
         self
@@ -145,14 +150,14 @@ impl std::fmt::Display for QueryResult {
 
 #[cfg(test)]
 mod tests {
-    use crate::value::LogicalType;
-    use crate::database::Database;
     use crate::connection::Connection;
+    use crate::database::Database;
+    use crate::value::LogicalType;
     #[test]
     fn test_query_result_metadata() -> anyhow::Result<()> {
         let temp_dir = tempdir::TempDir::new("example")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut connection = Connection::new(&mut db)?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let connection = Connection::new(&db)?;
 
         // Create schema.
         connection.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
@@ -161,13 +166,15 @@ mod tests {
         connection.query("CREATE (:Person {name: 'Bob', age: 30});")?;
 
         // Execute a simple query.
-        let result =
-            connection.query("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?;
+        let result = connection.query("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?;
 
         assert!(result.get_compiling_time() > 0.);
         assert!(result.get_execution_time() > 0.);
         assert_eq!(result.get_column_names(), vec!["NAME", "AGE"]);
-        assert_eq!(result.get_column_data_types(), vec![LogicalType::String, LogicalType::Int64]);
+        assert_eq!(
+            result.get_column_data_types(),
+            vec![LogicalType::String, LogicalType::Int64]
+        );
         temp_dir.close()?;
         Ok(())
     }

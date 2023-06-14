@@ -156,7 +156,7 @@ impl From<&ffi::LogicalType> for LogicalType {
                 LogicalType::Struct {
                     fields: names
                         .into_iter()
-                        .zip(types.into_iter().map(|x| Into::<LogicalType>::into(x)))
+                        .zip(types.into_iter().map(Into::<LogicalType>::into))
                         .collect(),
                 }
             }
@@ -168,9 +168,9 @@ impl From<&ffi::LogicalType> for LogicalType {
     }
 }
 
-impl Into<cxx::UniquePtr<ffi::LogicalType>> for &LogicalType {
-    fn into(self) -> cxx::UniquePtr<ffi::LogicalType> {
-        match self {
+impl From<&LogicalType> for cxx::UniquePtr<ffi::LogicalType> {
+    fn from(typ: &LogicalType) -> Self {
+        match typ {
             LogicalType::Any
             | LogicalType::Bool
             | LogicalType::Int64
@@ -182,7 +182,7 @@ impl Into<cxx::UniquePtr<ffi::LogicalType>> for &LogicalType {
             | LogicalType::Timestamp
             | LogicalType::Interval
             | LogicalType::InternalID
-            | LogicalType::String => ffi::create_logical_type(self.id()),
+            | LogicalType::String => ffi::create_logical_type(typ.id()),
             LogicalType::VarList { child_type } => {
                 ffi::create_logical_type_var_list(child_type.as_ref().into())
             }
@@ -307,9 +307,9 @@ impl std::fmt::Display for Value {
     }
 }
 
-impl Into<LogicalType> for &Value {
-    fn into(self) -> LogicalType {
-        match self {
+impl From<&Value> for LogicalType {
+    fn from(value: &Value) -> Self {
+        match value {
             Value::Bool(_) => LogicalType::Bool,
             Value::Int16(_) => LogicalType::Int16,
             Value::Int32(_) => LogicalType::Int32,
@@ -625,8 +625,8 @@ mod tests {
             /// Tests that passing the values through the database returns what we put in
             fn $name() -> Result<()> {
                 let temp_dir = tempdir::TempDir::new("example")?;
-                let mut db = Database::new(temp_dir.path(), 0)?;
-                let mut conn = Connection::new(&mut db)?;
+                let db = Database::new(temp_dir.path(), 0)?;
+                let conn = Connection::new(&db)?;
                 conn.query(&format!(
                     "CREATE NODE TABLE Person(name STRING, item {}, PRIMARY KEY(name));",
                     $decl,
@@ -715,8 +715,8 @@ mod tests {
     /// Tests that the list value is correctly constructed
     fn test_var_list_get() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let conn = Connection::new(&db)?;
         for result in conn.query("RETURN [\"Alice\", \"Bob\"] AS l;")? {
             assert_eq!(result.len(), 1);
             assert_eq!(
@@ -732,8 +732,8 @@ mod tests {
     /// Test that the timestamp round-trips through kuzu's internal timestamp
     fn test_timestamp() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let conn = Connection::new(&db)?;
         conn.query(
             "CREATE NODE TABLE Person(name STRING, registerTime TIMESTAMP, PRIMARY KEY(name));",
         )?;
@@ -780,8 +780,8 @@ mod tests {
     /// Test that null values are read correctly by the API
     fn test_null() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let conn = Connection::new(&db)?;
         let result = conn.query("RETURN null")?.next();
         let result = &result.unwrap()[0];
         assert_eq!(result, &Value::Null(LogicalType::String));

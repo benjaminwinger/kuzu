@@ -10,8 +10,8 @@ pub struct Database {
     pub(crate) db: UnsafeCell<UniquePtr<ffi::Database>>,
 }
 
-unsafe impl<'a> Send for Database {}
-unsafe impl<'a> Sync for Database {}
+unsafe impl Send for Database {}
+unsafe impl Sync for Database {}
 
 pub enum LoggingLevel {
     Debug,
