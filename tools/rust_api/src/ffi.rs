@@ -67,26 +67,21 @@ pub(crate) mod ffi {
         fn new_database(
             databasePath: &CxxString,
             bufferPoolSize: u64,
-        ) -> Result<*mut Database>;
+        ) -> Result<UniquePtr<Database>>;
 
-        #[rust_name = "delete_database"]
-        unsafe fn delete_pointer(db: *mut Database);
-
-        unsafe fn database_set_logging_level(database: *mut Database, level: &CxxString);
+        fn database_set_logging_level(database: Pin<&mut Database>, level: &CxxString);
     }
 
     #[namespace = "kuzu::main"]
     unsafe extern "C++" {
         // The C++ Connection class includes a pointer to the database.
         // We must not destroy a referenced database while a connection is open.
-        type Connection;
+        type Connection<'a>;
 
         #[namespace = "kuzu_rs"]
-        unsafe fn database_connect(database: *mut Database) -> Result<*mut Connection>;
-
-        #[rust_name = "delete_connection"]
-        #[namespace = "kuzu_rs"]
-        unsafe fn delete_pointer(db: *mut Connection);
+        fn database_connect<'a>(
+            database: Pin<&'a mut Database>,
+        ) -> Result<UniquePtr<Connection<'a>>>;
 
         fn prepare(
             self: Pin<&mut Connection>,
@@ -137,7 +132,9 @@ pub(crate) mod ffi {
         ) -> Result<()>;
 
         #[namespace = "kuzu_rs"]
-        fn query_result_column_data_types(query_result: &QueryResult) -> UniquePtr<CxxVector<LogicalType>>;
+        fn query_result_column_data_types(
+            query_result: &QueryResult,
+        ) -> UniquePtr<CxxVector<LogicalType>>;
         #[namespace = "kuzu_rs"]
         fn query_result_column_names(query_result: &QueryResult) -> Vec<String>;
     }

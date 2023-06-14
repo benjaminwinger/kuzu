@@ -4,10 +4,8 @@ use crate::ffi::ffi;
 use crate::query_result::QueryResult;
 use crate::value::Value;
 use cxx::{let_cxx_string, UniquePtr};
+use std::cell::UnsafeCell;
 use std::convert::TryInto;
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::ptr::NonNull;
 
 /// A prepared stattement is a parameterized query which can avoid planning the same query for
 /// repeated execution
@@ -95,20 +93,10 @@ pub struct PreparedStatement {
 /// # }
 /// ```
 pub struct Connection<'a> {
-    // TODO: Maybe use rwlock to control access to the connection?
-    // We know that access should be safe, but that's not good enough for the rust compiler.
-    // Alternatively, calls to query, etc. could be made unsafe so that they can be considered
-    // immutable
-    conn: NonNull<ffi::Connection>,
-    db_life: PhantomData<&'a Database>,
-}
-
-impl<'a> Drop for Connection<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            ffi::delete_connection(self.conn.as_ptr());
-        }
-    }
+    // bmwinger: Access to the underlying value for synchronized functions can be done
+    // with (&mut *self.conn.get()).pin_mut()
+    // Turning this into a function just causes lifetime issues.
+    conn: UnsafeCell<UniquePtr<ffi::Connection<'a>>>,
 }
 
 // Connections are synchronized on the C++ side and should be safe to move and access across
@@ -122,22 +110,10 @@ impl<'a> Connection<'a> {
     /// # Arguments
     /// * `database`: A reference to the database instance to which this connection will be connected.
     pub fn new(database: &'a Database) -> Result<Self, Error> {
-        let conn: *mut ffi::Connection = unsafe { ffi::database_connect(database.db.as_ptr())? };
+        let db = unsafe { (*database.db.get()).pin_mut() };
         Ok(Connection {
-            conn: NonNull::new(conn).expect("Connection creation returned a null pointer!"),
-            db_life: PhantomData,
+            conn: UnsafeCell::new(ffi::database_connect(db)?),
         })
-    }
-
-    /// Use to access the ffi when we already have exclusive access to self
-    fn pin_mut(&mut self) -> Pin<&mut ffi::Connection> {
-        unsafe { Pin::new_unchecked(self.conn.as_mut()) }
-    }
-
-    /// Use to access the ffi when we do not have exclusive access to self
-    /// Should only be used with ffi functions which are synchronized on the C++ side.
-    unsafe fn pin_mut_unchecked(&self) -> Pin<&mut ffi::Connection> {
-        Pin::new_unchecked(&mut *self.conn.as_ptr())
     }
 
     /// Sets the maximum number of threads to use for execution in the current connection
@@ -145,12 +121,15 @@ impl<'a> Connection<'a> {
     /// # Arguments
     /// * `num_threads`: The maximum number of threads to use for execution in the current connection
     pub fn set_max_num_threads_for_exec(&mut self, num_threads: u64) {
-        self.pin_mut().setMaxNumThreadForExec(num_threads);
+        self.conn
+            .get_mut()
+            .pin_mut()
+            .setMaxNumThreadForExec(num_threads);
     }
 
     /// Returns the maximum number of threads used for execution in the current connection
     pub fn get_max_num_threads_for_exec(&self) -> u64 {
-        unsafe { self.pin_mut_unchecked().getMaxNumThreadForExec() }
+        unsafe { (&mut *self.conn.get()).pin_mut().getMaxNumThreadForExec() }
     }
 
     /// Prepares the given query and returns the prepared statement.
@@ -160,7 +139,7 @@ impl<'a> Connection<'a> {
     ///            See <https://kuzudb.com/docs/cypher> for details on the query format
     pub fn prepare(&self, query: &str) -> Result<PreparedStatement, Error> {
         let_cxx_string!(query = query);
-        let statement = unsafe { self.pin_mut_unchecked().prepare(&query)? };
+        let statement = unsafe { (&mut *self.conn.get()).pin_mut() }.prepare(&query)?;
         if statement.isSuccess() {
             Ok(PreparedStatement { statement })
         } else {
@@ -212,7 +191,7 @@ impl<'a> Connection<'a> {
             let ffi_value: cxx::UniquePtr<ffi::Value> = value.try_into()?;
             cxx_params.pin_mut().insert(key, ffi_value);
         }
-        let conn = unsafe { self.pin_mut_unchecked() };
+        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
         let result =
             ffi::connection_execute(conn, prepared_statement.statement.pin_mut(), cxx_params)?;
         if !result.isSuccess() {
@@ -226,31 +205,31 @@ impl<'a> Connection<'a> {
 
     /// Manually starts a new read-only transaction in the current connection
     pub fn begin_read_only_transaction(&self) -> Result<(), Error> {
-        let conn = unsafe { self.pin_mut_unchecked() };
+        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
         Ok(conn.beginReadOnlyTransaction()?)
     }
 
     /// Manually starts a new write transaction in the current connection
     pub fn begin_write_transaction(&self) -> Result<(), Error> {
-        let conn = unsafe { self.pin_mut_unchecked() };
+        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
         Ok(conn.beginWriteTransaction()?)
     }
 
     /// Manually commits the current transaction
     pub fn commit(&self) -> Result<(), Error> {
-        let conn = unsafe { self.pin_mut_unchecked() };
+        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
         Ok(conn.commit()?)
     }
 
     /// Manually rolls back the current transaction
     pub fn rollback(&self) -> Result<(), Error> {
-        let conn = unsafe { self.pin_mut_unchecked() };
+        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
         Ok(conn.rollback()?)
     }
 
     /// Interrupts all queries currently executing within this connection
     pub fn interrupt(&self) -> Result<(), Error> {
-        let conn = unsafe { self.pin_mut_unchecked() };
+        let conn = unsafe { (&mut *self.conn.get()).pin_mut() };
         Ok(conn.interrupt()?)
     }
 
@@ -278,8 +257,8 @@ mod tests {
     #[test]
     fn test_connection_threads() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example1")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let mut conn = Connection::new(&db)?;
         conn.set_max_num_threads_for_exec(5);
         assert_eq!(conn.get_max_num_threads_for_exec(), 5);
         temp_dir.close()?;
@@ -289,8 +268,8 @@ mod tests {
     #[test]
     fn test_invalid_query() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example2")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let conn = Connection::new(&db)?;
         conn.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
         conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
         conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;
@@ -312,8 +291,8 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
     #[test]
     fn test_query_result() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example3")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let conn = Connection::new(&db)?;
         conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
         conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
 
@@ -329,8 +308,8 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
     #[test]
     fn test_params() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example3")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let conn = Connection::new(&db)?;
         conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
         conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
         conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;
@@ -347,8 +326,8 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
     #[test]
     fn test_params_invalid_type() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example3")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
-        let mut conn = Connection::new(&mut db)?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let conn = Connection::new(&db)?;
         conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
         conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
         conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;
@@ -414,12 +393,12 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
 
         let (alice, bob) = std::thread::scope(|s| -> Result<(Vec<Value>, Vec<Value>)> {
             let alice_thread = s.spawn(|| -> Result<Vec<Value>> {
-                let mut conn = Connection::new(&db)?;
+                let conn = Connection::new(&db)?;
                 let mut result = conn.query("MATCH (a:Person) WHERE a.name = \"Alice\" RETURN a.name AS NAME, a.age AS AGE;")?;
                 Ok(result.next().unwrap())
             });
             let bob_thread = s.spawn(|| -> Result<Vec<Value>> {
-                let mut conn = Connection::new(&db)?;
+                let conn = Connection::new(&db)?;
                 let mut result = conn.query(
                     "MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.name AS NAME, a.age AS AGE;",
                 )?;

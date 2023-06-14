@@ -69,20 +69,20 @@ std::unique_ptr<std::vector<kuzu::common::LogicalType>> logical_type_get_struct_
     return std::make_unique<std::vector<LogicalType>>(result);
 }
 
-Database* new_database(const std::string& databasePath, const long unsigned int bufferPoolSize) {
+std::unique_ptr<Database> new_database(const std::string& databasePath, const long unsigned int bufferPoolSize) {
     auto systemConfig = SystemConfig();
     if (bufferPoolSize > 0) {
         systemConfig.bufferPoolSize = bufferPoolSize;
     }
-    return new Database(databasePath, systemConfig);
+    return std::make_unique<Database>(databasePath, systemConfig);
 }
 
-void database_set_logging_level(Database* database, const std::string& level) {
-    database->setLoggingLevel(level);
+void database_set_logging_level(Database& database, const std::string& level) {
+    database.setLoggingLevel(level);
 }
 
-kuzu::main::Connection* database_connect(kuzu::main::Database* database) {
-    return new Connection(database);
+std::unique_ptr<kuzu::main::Connection> database_connect(kuzu::main::Database& database) {
+    return std::make_unique<Connection>(&database);
 }
 
 std::unique_ptr<kuzu::main::QueryResult> connection_execute(kuzu::main::Connection& connection,
