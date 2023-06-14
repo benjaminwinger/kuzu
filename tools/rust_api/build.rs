@@ -60,8 +60,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("cargo:rustc-link-lib=static=arrow_bundled_dependencies");
         // Dependencies of arrow's bundled dependencies
-        println!("cargo:rustc-link-lib=static=ssl");
-        println!("cargo:rustc-link-lib=static=crypto");
+        // Only seems necessary when building tests? I'm not convinced the functions are being
+        // used, but linking the tests seems to require that they are defined
+        // This will probably not work on windows/macOS
+        // openssl-sys has better cross-platform logic, but just using that doesn't work.
+        println!("cargo:rustc-link-lib=dylib=ssl");
+        println!("cargo:rustc-link-lib=dylib=crypto");
 
         println!("cargo:rustc-link-lib=static=parquet");
         println!("cargo:rustc-link-lib=static=arrow");
