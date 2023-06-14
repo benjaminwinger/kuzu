@@ -60,7 +60,8 @@ rust::Vec<rust::String> logical_type_get_struct_field_names(
     return names;
 }
 
-std::unique_ptr<std::vector<kuzu::common::LogicalType>> logical_type_get_struct_field_types(const kuzu::common::LogicalType& value) {
+std::unique_ptr<std::vector<kuzu::common::LogicalType>> logical_type_get_struct_field_types(
+    const kuzu::common::LogicalType& value) {
     std::vector<kuzu::common::LogicalType> result;
     for (auto type : kuzu::common::StructType::getFieldTypes(&value)) {
         result.push_back(*type);
@@ -68,21 +69,20 @@ std::unique_ptr<std::vector<kuzu::common::LogicalType>> logical_type_get_struct_
     return std::make_unique<std::vector<LogicalType>>(result);
 }
 
-std::unique_ptr<Database> new_database(
-    const std::string& databasePath, const long unsigned int bufferPoolSize) {
+Database* new_database(const std::string& databasePath, const long unsigned int bufferPoolSize) {
     auto systemConfig = SystemConfig();
     if (bufferPoolSize > 0) {
         systemConfig.bufferPoolSize = bufferPoolSize;
     }
-    return std::make_unique<Database>(databasePath, systemConfig);
+    return new Database(databasePath, systemConfig);
 }
 
-void database_set_logging_level(Database& database, const std::string& level) {
-    database.setLoggingLevel(level);
+void database_set_logging_level(Database* database, const std::string& level) {
+    database->setLoggingLevel(level);
 }
 
-std::unique_ptr<kuzu::main::Connection> database_connect(kuzu::main::Database& database) {
-    return std::make_unique<Connection>(&database);
+kuzu::main::Connection* database_connect(kuzu::main::Database* database) {
+    return new Connection(database);
 }
 
 std::unique_ptr<kuzu::main::QueryResult> connection_execute(kuzu::main::Connection& connection,
@@ -111,13 +111,16 @@ double query_result_get_execution_time(const kuzu::main::QueryResult& result) {
 
 void query_result_write_to_csv(kuzu::main::QueryResult& query_result, const rust::String& filename,
     int8_t delimiter, int8_t escape_character, int8_t newline) {
-    query_result.writeToCSV(std::string(filename), (char)delimiter, (char)escape_character, (char)newline);
+    query_result.writeToCSV(
+        std::string(filename), (char)delimiter, (char)escape_character, (char)newline);
 }
 
-std::unique_ptr<std::vector<kuzu::common::LogicalType>> query_result_column_data_types(const kuzu::main::QueryResult &query_result) {
-    return std::make_unique<std::vector<kuzu::common::LogicalType>>(query_result.getColumnDataTypes());
+std::unique_ptr<std::vector<kuzu::common::LogicalType>> query_result_column_data_types(
+    const kuzu::main::QueryResult& query_result) {
+    return std::make_unique<std::vector<kuzu::common::LogicalType>>(
+        query_result.getColumnDataTypes());
 }
-rust::Vec<rust::String> query_result_column_names(const kuzu::main::QueryResult &query_result) {
+rust::Vec<rust::String> query_result_column_names(const kuzu::main::QueryResult& query_result) {
     rust::Vec<rust::String> names;
     for (auto name : query_result.getColumnNames()) {
         names.push_back(name);
@@ -188,7 +191,8 @@ std::unique_ptr<kuzu::common::Value> create_value_interval(
     const int32_t months, const int32_t days, const int64_t micros) {
     return std::make_unique<kuzu::common::Value>(kuzu::common::interval_t(months, days, micros));
 }
-std::unique_ptr<kuzu::common::Value> create_value_null(std::unique_ptr<kuzu::common::LogicalType> typ) {
+std::unique_ptr<kuzu::common::Value> create_value_null(
+    std::unique_ptr<kuzu::common::LogicalType> typ) {
     return std::make_unique<kuzu::common::Value>(
         kuzu::common::Value::createNullValue(kuzu::common::LogicalType(*typ)));
 }

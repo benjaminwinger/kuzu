@@ -60,13 +60,18 @@ struct ValueList {
 };
 
 /* Database */
-std::unique_ptr<kuzu::main::Database> new_database(
+kuzu::main::Database * new_database(
     const std::string& databasePath, const long unsigned int bufferPoolSize);
 
-void database_set_logging_level(kuzu::main::Database& database, const std::string& level);
+template <typename T>
+void delete_pointer(T *ptr) {
+    delete ptr;
+}
+
+void database_set_logging_level(kuzu::main::Database* database, const std::string& level);
 
 /* Connection */
-std::unique_ptr<kuzu::main::Connection> database_connect(kuzu::main::Database& database);
+kuzu::main::Connection* database_connect(kuzu::main::Database* database);
 std::unique_ptr<kuzu::main::QueryResult> connection_execute(kuzu::main::Connection& connection,
     kuzu::main::PreparedStatement& query, std::unique_ptr<QueryParams> params);
 

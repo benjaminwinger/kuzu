@@ -5,6 +5,9 @@ use crate::query_result::QueryResult;
 use crate::value::Value;
 use cxx::{let_cxx_string, UniquePtr};
 use std::convert::TryInto;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::ptr::NonNull;
 
 /// A prepared stattement is a parameterized query which can avoid planning the same query for
 /// repeated execution
@@ -21,8 +24,12 @@ pub struct PreparedStatement {
 ///
 /// Note that since connections require a reference to the Database, creating or using connections
 /// in multiple threads cannot be done from a regular std::thread since the threads (and
-/// connections) could outlive the database. This can be worked around by using a scoped thread
-/// such as [crosssbeam_utils::thread::scope](https://docs.rs/crossbeam-utils/0.8.15/crossbeam_utils/thread/index.html)
+/// connections) could outlive the database. This can be worked around by using a
+/// [scoped thread](std::thread::scope) (Note: Introduced in rust 1.63. For compatibility with
+/// older versions of rust, [crosssbeam_utils::thread::scope](https://docs.rs/crossbeam-utils/latest/crossbeam_utils/thread/index.html) can be used instead).
+///
+/// Also note that mutable queries can only be done one at a time; the query command will return an
+/// [error](Error::FailedQuery) if another mutable query is in progress.
 ///
 /// ## Committing
 /// If the connection is in AUTO_COMMIT mode any query over the connection will be wrapped around
@@ -88,23 +95,49 @@ pub struct PreparedStatement {
 /// # }
 /// ```
 pub struct Connection<'a> {
-    conn: UniquePtr<ffi::Connection<'a>>,
+    // TODO: Maybe use rwlock to control access to the connection?
+    // We know that access should be safe, but that's not good enough for the rust compiler.
+    // Alternatively, calls to query, etc. could be made unsafe so that they can be considered
+    // immutable
+    conn: NonNull<ffi::Connection>,
+    db_life: PhantomData<&'a Database>,
+}
+
+impl<'a> Drop for Connection<'a> {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::delete_connection(self.conn.as_ptr());
+        }
+    }
 }
 
 // Connections are synchronized on the C++ side and should be safe to move and access across
 // threads
-unsafe impl<'a> Send for ffi::Connection<'a> {}
-unsafe impl<'a> Sync for ffi::Connection<'a> {}
+unsafe impl<'a> Send for Connection<'a> {}
+unsafe impl<'a> Sync for Connection<'a> {}
 
 impl<'a> Connection<'a> {
     /// Creates a connection to the database.
     ///
     /// # Arguments
     /// * `database`: A reference to the database instance to which this connection will be connected.
-    pub fn new(database: &'a mut Database) -> Result<Self, Error> {
+    pub fn new(database: &'a Database) -> Result<Self, Error> {
+        let conn: *mut ffi::Connection = unsafe { ffi::database_connect(database.db.as_ptr())? };
         Ok(Connection {
-            conn: ffi::database_connect(database.db.pin_mut())?,
+            conn: NonNull::new(conn).expect("Connection creation returned a null pointer!"),
+            db_life: PhantomData,
         })
+    }
+
+    /// Use to access the ffi when we already have exclusive access to self
+    fn pin_mut(&mut self) -> Pin<&mut ffi::Connection> {
+        unsafe { Pin::new_unchecked(self.conn.as_mut()) }
+    }
+
+    /// Use to access the ffi when we do not have exclusive access to self
+    /// Should only be used with ffi functions which are synchronized on the C++ side.
+    unsafe fn pin_mut_unchecked(&self) -> Pin<&mut ffi::Connection> {
+        Pin::new_unchecked(&mut *self.conn.as_ptr())
     }
 
     /// Sets the maximum number of threads to use for execution in the current connection
@@ -112,12 +145,12 @@ impl<'a> Connection<'a> {
     /// # Arguments
     /// * `num_threads`: The maximum number of threads to use for execution in the current connection
     pub fn set_max_num_threads_for_exec(&mut self, num_threads: u64) {
-        self.conn.pin_mut().setMaxNumThreadForExec(num_threads);
+        self.pin_mut().setMaxNumThreadForExec(num_threads);
     }
 
     /// Returns the maximum number of threads used for execution in the current connection
-    pub fn get_max_num_threads_for_exec(&mut self) -> u64 {
-        self.conn.pin_mut().getMaxNumThreadForExec()
+    pub fn get_max_num_threads_for_exec(&self) -> u64 {
+        unsafe { self.pin_mut_unchecked().getMaxNumThreadForExec() }
     }
 
     /// Prepares the given query and returns the prepared statement.
@@ -125,9 +158,9 @@ impl<'a> Connection<'a> {
     /// # Arguments
     /// * `query`: The query to prepare.
     ///            See <https://kuzudb.com/docs/cypher> for details on the query format
-    pub fn prepare(&mut self, query: &str) -> Result<PreparedStatement, Error> {
+    pub fn prepare(&self, query: &str) -> Result<PreparedStatement, Error> {
         let_cxx_string!(query = query);
-        let statement = self.conn.pin_mut().prepare(&query)?;
+        let statement = unsafe { self.pin_mut_unchecked().prepare(&query)? };
         if statement.isSuccess() {
             Ok(PreparedStatement { statement })
         } else {
@@ -157,7 +190,7 @@ impl<'a> Connection<'a> {
     // let result: QueryResult<kuzu::value::String> = conn.query("...")?;
     //
     // But this would really just be syntactic sugar wrapping the current system
-    pub fn query(&mut self, query: &str) -> Result<QueryResult, Error> {
+    pub fn query(&self, query: &str) -> Result<QueryResult, Error> {
         let mut statement = self.prepare(query)?;
         self.execute(&mut statement, vec![])
     }
@@ -167,7 +200,7 @@ impl<'a> Connection<'a> {
     /// # Arguments
     /// * `prepared_statement`: The prepared statement to execute
     pub fn execute(
-        &mut self,
+        &self,
         prepared_statement: &mut PreparedStatement,
         params: Vec<(&str, Value)>,
     ) -> Result<QueryResult, Error> {
@@ -179,11 +212,9 @@ impl<'a> Connection<'a> {
             let ffi_value: cxx::UniquePtr<ffi::Value> = value.try_into()?;
             cxx_params.pin_mut().insert(key, ffi_value);
         }
-        let result = ffi::connection_execute(
-            self.conn.pin_mut(),
-            prepared_statement.statement.pin_mut(),
-            cxx_params,
-        )?;
+        let conn = unsafe { self.pin_mut_unchecked() };
+        let result =
+            ffi::connection_execute(conn, prepared_statement.statement.pin_mut(), cxx_params)?;
         if !result.isSuccess() {
             Err(Error::FailedQuery(ffi::query_result_get_error_message(
                 &result,
@@ -194,28 +225,33 @@ impl<'a> Connection<'a> {
     }
 
     /// Manually starts a new read-only transaction in the current connection
-    pub fn begin_read_only_transaction(&mut self) -> Result<(), Error> {
-        Ok(self.conn.pin_mut().beginReadOnlyTransaction()?)
+    pub fn begin_read_only_transaction(&self) -> Result<(), Error> {
+        let conn = unsafe { self.pin_mut_unchecked() };
+        Ok(conn.beginReadOnlyTransaction()?)
     }
 
     /// Manually starts a new write transaction in the current connection
-    pub fn begin_write_transaction(&mut self) -> Result<(), Error> {
-        Ok(self.conn.pin_mut().beginWriteTransaction()?)
+    pub fn begin_write_transaction(&self) -> Result<(), Error> {
+        let conn = unsafe { self.pin_mut_unchecked() };
+        Ok(conn.beginWriteTransaction()?)
     }
 
     /// Manually commits the current transaction
-    pub fn commit(&mut self) -> Result<(), Error> {
-        Ok(self.conn.pin_mut().commit()?)
+    pub fn commit(&self) -> Result<(), Error> {
+        let conn = unsafe { self.pin_mut_unchecked() };
+        Ok(conn.commit()?)
     }
 
     /// Manually rolls back the current transaction
-    pub fn rollback(&mut self) -> Result<(), Error> {
-        Ok(self.conn.pin_mut().rollback()?)
+    pub fn rollback(&self) -> Result<(), Error> {
+        let conn = unsafe { self.pin_mut_unchecked() };
+        Ok(conn.rollback()?)
     }
 
     /// Interrupts all queries currently executing within this connection
-    pub fn interrupt(&mut self) -> Result<(), Error> {
-        Ok(self.conn.pin_mut().interrupt()?)
+    pub fn interrupt(&self) -> Result<(), Error> {
+        let conn = unsafe { self.pin_mut_unchecked() };
+        Ok(conn.interrupt()?)
     }
 
     /* TODO (bmwinger)
@@ -333,93 +369,69 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
         Ok(())
     }
 
-    /*
     #[test]
     fn test_multithreaded_single_conn() -> Result<()> {
-        use crossbeam_utils::thread;
-        use std::collections::HashMap;
         let temp_dir = tempdir::TempDir::new("example3")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
+        let db = Database::new(temp_dir.path(), 0)?;
 
-        let mut conn = Connection::new(&mut db)?;
-        thread::scope(|s| {
-            conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
+        let conn = Connection::new(&db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT32, PRIMARY KEY(name));")?;
+        // Write queries must be done sequentially
+        conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
+        conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;
 
-            let alice_thread =
-                s.spawn(&mut |_| conn.query("CREATE (:Person {name: 'Alice', age: 25});"));
-            let bob_thread =
-                s.spawn(&mut |_| conn.query("CREATE (:Person {name: 'Bob', age: 30});"));
+        let (alice, bob) = std::thread::scope(|s| -> Result<(Vec<Value>, Vec<Value>)> {
+            let alice_thread = s.spawn(|| -> Result<Vec<Value>> {
+                let mut result = conn.query("MATCH (a:Person) WHERE a.name = \"Alice\" RETURN a.name AS NAME, a.age AS AGE;")?;
+                Ok(result.next().unwrap())
+            });
+            let bob_thread = s.spawn(|| -> Result<Vec<Value>> {
+                let mut result = conn.query(
+                    "MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.name AS NAME, a.age AS AGE;",
+                )?;
+                Ok(result.next().unwrap())
+            });
 
-            alice_thread.join().unwrap()?;
-            bob_thread.join().unwrap()?;
+            Ok((alice_thread.join().unwrap()?, bob_thread.join().unwrap()?))
+        })?;
 
-            let people: HashMap<String, i16> = conn
-                .query("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?
-                .map(|person| {
-                    if let (Value::String(ref name), Value::Int16(ref age)) =
-                        (&person[0], &person[1])
-                    {
-                        (name.clone(), *age)
-                    } else {
-                        panic!("Query result was not a (STRING, INT16) tuple!")
-                    }
-                })
-                .collect();
-            let expected: HashMap<String, i16> =
-                vec![("Alice".to_string(), 25i16), ("Bob".to_string(), 30i16)]
-                    .into_iter()
-                    .collect();
-            assert_eq!(people, expected);
-            Ok::<(), anyhow::Error>(())
-        })
-        .unwrap()?;
+        assert_eq!(alice, vec!["Alice".into(), 25.into()]);
+        assert_eq!(bob, vec!["Bob".into(), 30.into()]);
         temp_dir.close()?;
         Ok(())
     }
 
     #[test]
     fn test_multithreaded_multiple_conn() -> Result<()> {
-        use crossbeam_utils::thread;
-        use std::collections::HashMap;
         let temp_dir = tempdir::TempDir::new("example3")?;
-        let mut db = Database::new(temp_dir.path(), 0)?;
+        let db = Database::new(temp_dir.path(), 0)?;
 
-        let mut conn = Connection::new(&mut db)?;
-        conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
-        thread::scope(|s| {
-            let alice_thread = s.spawn(&mut |_| {
-                let mut conn = Connection::new(&mut db)?;
-                conn.query("CREATE (:Person {name: 'Alice', age: 25});")
-            });
-            let bob_thread = s.spawn(&mut |_| {
-                let mut conn = Connection::new(&mut db)?;
-                conn.query("CREATE (:Person {name: 'Bob', age: 30});")
-            });
-            alice_thread.join().unwrap()?;
-            bob_thread.join().unwrap()?;
+        let conn = Connection::new(&db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT32, PRIMARY KEY(name));")?;
+        // Write queries must be done sequentially
+        conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
+        conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;
 
-            let people: HashMap<String, i16> = conn
-                .query("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?
-                .map(|person| {
-                    if let (Value::String(ref name), Value::Int16(ref age)) =
-                        (&person[0], &person[1])
-                    {
-                        (name.clone(), *age)
-                    } else {
-                        panic!("Query result was not a (STRING, INT16) tuple!")
-                    }
-                })
-                .collect();
-            let expected: HashMap<String, i16> =
-                vec![("Alice".to_string(), 25i16), ("Bob".to_string(), 30i16)]
-                    .into_iter()
-                    .collect();
-            assert_eq!(people, expected);
-            Ok::<(), anyhow::Error>(())
-        })
-        .unwrap()?;
+        let (alice, bob) = std::thread::scope(|s| -> Result<(Vec<Value>, Vec<Value>)> {
+            let alice_thread = s.spawn(|| -> Result<Vec<Value>> {
+                let mut conn = Connection::new(&db)?;
+                let mut result = conn.query("MATCH (a:Person) WHERE a.name = \"Alice\" RETURN a.name AS NAME, a.age AS AGE;")?;
+                Ok(result.next().unwrap())
+            });
+            let bob_thread = s.spawn(|| -> Result<Vec<Value>> {
+                let mut conn = Connection::new(&db)?;
+                let mut result = conn.query(
+                    "MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.name AS NAME, a.age AS AGE;",
+                )?;
+                Ok(result.next().unwrap())
+            });
+
+            Ok((alice_thread.join().unwrap()?, bob_thread.join().unwrap()?))
+        })?;
+
+        assert_eq!(alice, vec!["Alice".into(), 25.into()]);
+        assert_eq!(bob, vec!["Bob".into(), 30.into()]);
         temp_dir.close()?;
         Ok(())
     }
-    */
 }

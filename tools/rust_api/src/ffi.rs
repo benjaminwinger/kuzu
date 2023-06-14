@@ -59,28 +59,34 @@ pub(crate) mod ffi {
         fn new_params() -> UniquePtr<QueryParams>;
     }
 
-    #[namespace = "kuzu::main"]
+    #[namespace = "kuzu_rs"]
     unsafe extern "C++" {
+        #[namespace = "kuzu::main"]
         type Database;
 
-        #[namespace = "kuzu_rs"]
         fn new_database(
             databasePath: &CxxString,
             bufferPoolSize: u64,
-        ) -> Result<UniquePtr<Database>>;
+        ) -> Result<*mut Database>;
 
-        #[namespace = "kuzu_rs"]
-        fn database_set_logging_level(database: Pin<&mut Database>, level: &CxxString);
+        #[rust_name = "delete_database"]
+        unsafe fn delete_pointer(db: *mut Database);
+
+        unsafe fn database_set_logging_level(database: *mut Database, level: &CxxString);
     }
 
     #[namespace = "kuzu::main"]
     unsafe extern "C++" {
         // The C++ Connection class includes a pointer to the database.
         // We must not destroy a referenced database while a connection is open.
-        type Connection<'a>;
+        type Connection;
 
         #[namespace = "kuzu_rs"]
-        fn database_connect(database: Pin<&mut Database>) -> Result<UniquePtr<Connection>>;
+        unsafe fn database_connect(database: *mut Database) -> Result<*mut Connection>;
+
+        #[rust_name = "delete_connection"]
+        #[namespace = "kuzu_rs"]
+        unsafe fn delete_pointer(db: *mut Connection);
 
         fn prepare(
             self: Pin<&mut Connection>,

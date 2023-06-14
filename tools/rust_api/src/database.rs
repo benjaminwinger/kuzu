@@ -1,20 +1,30 @@
 use crate::error::Error;
 use crate::ffi::ffi;
-use cxx::{let_cxx_string, UniquePtr};
+use cxx::let_cxx_string;
+use std::ptr::NonNull;
 use std::fmt;
 use std::path::Path;
 
 /// The Database class is the main class of KuzuDB. It manages all database components.
 pub struct Database {
-    pub(crate) db: UniquePtr<ffi::Database>,
+    pub(crate) db: NonNull<ffi::Database>,
 }
 
-unsafe impl<'a> Send for ffi::Database {}
+unsafe impl<'a> Send for Database {}
+unsafe impl<'a> Sync for Database {}
 
 pub enum LoggingLevel {
     Debug,
     Info,
     Error,
+}
+
+impl Drop for Database {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::delete_database(self.db.as_ptr());
+        }
+    }
 }
 
 impl Database {
@@ -26,7 +36,8 @@ impl Database {
     pub fn new<P: AsRef<Path>>(path: P, buffer_pool_size: u64) -> Result<Self, Error> {
         let_cxx_string!(path = path.as_ref().display().to_string());
         Ok(Database {
-            db: ffi::new_database(&path, buffer_pool_size)?,
+            db: NonNull::new(ffi::new_database(&path, buffer_pool_size)?)
+                .expect("Database creation returned a null pointer!"),
         })
     }
 
@@ -42,7 +53,9 @@ impl Database {
                 LoggingLevel::Error => "err",
             }
         );
-        ffi::database_set_logging_level(self.db.pin_mut(), &level);
+        unsafe {
+            ffi::database_set_logging_level(self.db.as_ptr(), &level);
+        }
     }
 }
 
