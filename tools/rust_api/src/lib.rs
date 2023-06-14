@@ -23,7 +23,7 @@
 //!
 //! ## Safety
 //!
-//! Generally, use of of this API is safe, however creating multiple databases in the same 
+//! Generally, use of of this API is safe, however creating multiple databases in the same
 //! scope is not safe.
 //! If you need to access multiple databases you will need to do so in separate processes.
 

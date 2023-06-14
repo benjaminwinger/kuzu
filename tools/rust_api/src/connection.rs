@@ -15,7 +15,7 @@ pub struct PreparedStatement {
 
 /// Connections are used to interact with a Database instance.
 ///
-/// ## Multithreading
+/// ## Concurrency
 ///
 /// Each connection is thread-safe, and multiple connections can connect to the same Database
 /// instance in a multithreaded environment.
@@ -26,8 +26,42 @@ pub struct PreparedStatement {
 /// [scoped thread](std::thread::scope) (Note: Introduced in rust 1.63. For compatibility with
 /// older versions of rust, [crosssbeam_utils::thread::scope](https://docs.rs/crossbeam-utils/latest/crossbeam_utils/thread/index.html) can be used instead).
 ///
-/// Also note that mutable queries can only be done one at a time; the query command will return an
-/// [error](Error::FailedQuery) if another mutable query is in progress.
+/// Also note that write queries can only be done one at a time; the query command will return an
+/// [error](Error::FailedQuery) if another write query is in progress.
+///
+/// ```
+/// # use kuzu::{Connection, Database, Value, Error};
+/// # fn main() -> anyhow::Result<()> {
+/// # let temp_dir = tempdir::TempDir::new("example3")?;
+/// # let db = Database::new(temp_dir.path(), 0)?;
+///
+/// let conn = Connection::new(&db)?;
+/// conn.query("CREATE NODE TABLE Person(name STRING, age INT32, PRIMARY KEY(name));")?;
+/// // Write queries must be done sequentially
+/// conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
+/// conn.query("CREATE (:Person {name: 'Bob', age: 30});")?;
+/// let (alice, bob) = std::thread::scope(|s| -> Result<(Vec<Value>, Vec<Value>), Error> {
+///     let alice_thread = s.spawn(|| -> Result<Vec<Value>, Error> {
+///         let conn = Connection::new(&db)?;
+///         let mut result = conn.query("MATCH (a:Person) WHERE a.name = \"Alice\" RETURN a.name AS NAME, a.age AS AGE;")?;
+///         Ok(result.next().unwrap())
+///     });
+///     let bob_thread = s.spawn(|| -> Result<Vec<Value>, Error> {
+///         let conn = Connection::new(&db)?;
+///         let mut result = conn.query(
+///             "MATCH (a:Person) WHERE a.name = \"Bob\" RETURN a.name AS NAME, a.age AS AGE;",
+///         )?;
+///         Ok(result.next().unwrap())
+///     });
+///     Ok((alice_thread.join().unwrap()?, bob_thread.join().unwrap()?))
+///  })?;
+///
+///  assert_eq!(alice, vec!["Alice".into(), 25.into()]);
+///  assert_eq!(bob, vec!["Bob".into(), 30.into()]);
+///  temp_dir.close()?;
+///  Ok(())
+/// # }
+/// ```
 ///
 /// ## Committing
 /// If the connection is in AUTO_COMMIT mode any query over the connection will be wrapped around
