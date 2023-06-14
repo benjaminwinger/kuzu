@@ -142,6 +142,21 @@ impl<'a> Connection<'a> {
     /// # Arguments
     /// * `query`: The query to execute.
     ///            See <https://kuzudb.com/docs/cypher> for details on the query format
+    // TODO(bmwinger): Instead of having a Value enum in the results, perhaps QueryResult, and thus query
+    // should be generic.
+    //
+    // E.g.
+    // let result: QueryResult<Vec<String>> = conn.query("...")?;
+    // Would expect a VarList of strings
+    //
+    // It's possible that this sort of thing would require a proc macro instead, but it could also be
+    // feasible to have a list of specific structs implementing a common trait.
+    //
+    // E.g.
+    // let result: QueryResult<kuzu::value::VarList<kuzu::value::String>> = conn.query("...")?;
+    // let result: QueryResult<kuzu::value::String> = conn.query("...")?;
+    //
+    // But this would really just be syntactic sugar wrapping the current system
     pub fn query(&mut self, query: &str) -> Result<QueryResult, Error> {
         let mut statement = self.prepare(query)?;
         self.execute(&mut statement, vec![])
