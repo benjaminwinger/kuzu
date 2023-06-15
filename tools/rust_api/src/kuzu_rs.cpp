@@ -5,6 +5,7 @@ using kuzu::common::Interval;
 using kuzu::common::LogicalType;
 using kuzu::common::LogicalTypeID;
 using kuzu::common::StructField;
+using kuzu::common::Value;
 using kuzu::common::VarListTypeInfo;
 using kuzu::main::Connection;
 using kuzu::main::Database;
@@ -69,7 +70,8 @@ std::unique_ptr<std::vector<kuzu::common::LogicalType>> logical_type_get_struct_
     return std::make_unique<std::vector<LogicalType>>(result);
 }
 
-std::unique_ptr<Database> new_database(const std::string& databasePath, const long unsigned int bufferPoolSize) {
+std::unique_ptr<Database> new_database(
+    const std::string& databasePath, const long unsigned int bufferPoolSize) {
     auto systemConfig = SystemConfig();
     if (bufferPoolSize > 0) {
         systemConfig.bufferPoolSize = bufferPoolSize;
@@ -128,9 +130,17 @@ rust::Vec<rust::String> query_result_column_names(const kuzu::main::QueryResult&
     return names;
 }
 
-rust::String node_value_to_string(const kuzu::common::NodeVal& val) {
-    return rust::String(val.toString());
+std::unique_ptr<PropertyList> node_value_get_properties(const kuzu::common::NodeVal& val) {
+    return std::make_unique<PropertyList>(val.getProperties());
 }
+std::array<uint64_t, 2> node_value_get_node_id(const kuzu::common::NodeVal& val) {
+    auto internalID = val.getNodeID();
+    return std::array{internalID.offset, internalID.tableID};
+}
+rust::String node_value_get_label_name(const kuzu::common::NodeVal& val) {
+    return val.getLabelName();
+}
+
 rust::String value_to_string(const kuzu::common::Value& val) {
     return rust::String(val.toString());
 }
@@ -144,7 +154,10 @@ const kuzu::common::Value& flat_tuple_get_value(
 }
 
 rust::String value_get_string(const kuzu::common::Value& value) {
-    return rust::String(value.getValue<std::string>());
+    return value.getValue<std::string>();
+}
+std::unique_ptr<kuzu::common::NodeVal> value_get_node_val(const kuzu::common::Value& value) {
+    return std::make_unique<kuzu::common::NodeVal>(value.getValue<kuzu::common::NodeVal>());
 }
 int64_t value_get_interval_secs(const kuzu::common::Value& value) {
     auto interval = value.getValue<kuzu::common::interval_t>();
@@ -195,6 +208,13 @@ std::unique_ptr<kuzu::common::Value> create_value_null(
     std::unique_ptr<kuzu::common::LogicalType> typ) {
     return std::make_unique<kuzu::common::Value>(
         kuzu::common::Value::createNullValue(kuzu::common::LogicalType(*typ)));
+}
+std::unique_ptr<kuzu::common::Value> create_value_internal_id(uint64_t offset, uint64_t table) {
+    return std::make_unique<kuzu::common::Value>(kuzu::common::internalID_t(offset, table));
+}
+std::unique_ptr<Value> create_value_node(
+    std::unique_ptr<Value> id_val, std::unique_ptr<Value> label_val) {
+    return std::make_unique<Value>(std::make_unique<kuzu::common::NodeVal>(std::move(id_val), std::move(label_val)));
 }
 
 std::unique_ptr<kuzu::common::Value> get_list_value(

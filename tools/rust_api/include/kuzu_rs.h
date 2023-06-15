@@ -83,11 +83,26 @@ double query_result_get_execution_time(const kuzu::main::QueryResult& result);
 void query_result_write_to_csv(kuzu::main::QueryResult& query_result, const rust::String& filename,
     int8_t delimiter, int8_t escape_character, int8_t newline);
 
-std::unique_ptr<std::vector<kuzu::common::LogicalType>> query_result_column_data_types(const kuzu::main::QueryResult &query_result);
-rust::Vec<rust::String> query_result_column_names(const kuzu::main::QueryResult &query_result);
+std::unique_ptr<std::vector<kuzu::common::LogicalType>> query_result_column_data_types(
+    const kuzu::main::QueryResult& query_result);
+rust::Vec<rust::String> query_result_column_names(const kuzu::main::QueryResult& query_result);
 
 /* NodeVal */
-rust::String node_value_to_string(const kuzu::common::NodeVal& val);
+struct PropertyList {
+    const std::vector<std::pair<std::string, std::unique_ptr<kuzu::common::Value>>>& properties;
+
+    size_t size() const { return properties.size(); }
+    rust::String get_name(size_t index) const {
+        return rust::String(this->properties[index].first);
+    }
+    const kuzu::common::Value& get_value(size_t index) const {
+        return *this->properties[index].second.get();
+    }
+};
+
+std::unique_ptr<PropertyList> node_value_get_properties(const kuzu::common::NodeVal& val);
+std::array<uint64_t, 2> node_value_get_node_id(const kuzu::common::NodeVal& val);
+rust::String node_value_get_label_name(const kuzu::common::NodeVal& val);
 
 /* FlatTuple */
 const kuzu::common::Value& flat_tuple_get_value(
@@ -95,6 +110,7 @@ const kuzu::common::Value& flat_tuple_get_value(
 
 /* Value */
 rust::String value_get_string(const kuzu::common::Value& value);
+std::unique_ptr<kuzu::common::NodeVal> value_get_node_val(const kuzu::common::Value& value);
 int64_t value_get_interval_secs(const kuzu::common::Value& value);
 int32_t value_get_interval_micros(const kuzu::common::Value& value);
 int32_t value_get_date_days(const kuzu::common::Value& value);
@@ -113,6 +129,9 @@ std::unique_ptr<kuzu::common::Value> create_value_interval(
 // TODO: Should take a DataType, not a DataTypeID. This won't work for compound types
 std::unique_ptr<kuzu::common::Value> create_value_null(
     std::unique_ptr<kuzu::common::LogicalType> typ);
+std::unique_ptr<kuzu::common::Value> create_value_internal_id(uint64_t offset, uint64_t table);
+std::unique_ptr<kuzu::common::Value> create_value_node(
+    std::unique_ptr<kuzu::common::Value> id_val, std::unique_ptr<kuzu::common::Value> label_val);
 
 template<typename T>
 std::unique_ptr<kuzu::common::Value> create_value(const T value) {

@@ -1,4 +1,5 @@
 use crate::ffi::ffi;
+use std::cmp::Ordering;
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 
@@ -36,27 +37,27 @@ trait CppValue {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct NodeValue {
-    id_val: Value,
-    label_val: Value,
+pub struct NodeVal {
+    id: InternalID,
+    label: String,
     properties: Vec<(String, Value)>,
 }
 
-impl NodeValue {
-    pub fn get_node_id_val(&self) -> &Value {
-        &self.id_val
+impl NodeVal {
+    pub fn new(id: InternalID, label: String) -> Self {
+        NodeVal {
+            id,
+            label,
+            properties: vec![],
+        }
     }
-    pub fn get_label_val(&self) -> &Value {
-        &self.label_val
+
+    pub fn get_node_id(&self) -> &InternalID {
+        &self.id
     }
 
     pub fn get_label_name(&self) -> &String {
-        if let Value::String(value) = &self.label_val {
-            value
-        } else {
-            // Is this unreachable?
-            unreachable!()
-        }
+        &self.label
     }
 
     pub fn add_property(&mut self, key: String, value: Value) {
@@ -68,25 +69,57 @@ impl NodeValue {
     }
 }
 
-/*
-impl std::fmt::Display for NodeValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            ffi::node_value_to_string(self.value.get_ref().unwrap())
-        )
+fn properties_display(
+    f: &mut fmt::Formatter<'_>,
+    properties: &Vec<(String, Value)>,
+) -> fmt::Result {
+    write!(f, "{{")?;
+    for (index, (name, value)) in properties.iter().enumerate() {
+        write!(f, "{}:{}", name, value)?;
+        if index < properties.len() - 1 {
+            write!(f, ",")?;
+        }
     }
-}*/
+    write!(f, "}}")
+}
+
+impl std::fmt::Display for NodeVal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(label: {}, {}, ", self.label, self.id)?;
+        properties_display(f, &self.properties)?;
+        write!(f, ")")
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RelValue {}
 
-// FIXME: should this be entirely private? The C++ api at least defines operators
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InternalID {
     pub(crate) offset: u64,
     pub(crate) table: u64,
+}
+
+impl std::fmt::Display for InternalID {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.table, self.offset)
+    }
+}
+
+impl PartialOrd for InternalID {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for InternalID {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.table == other.table {
+            self.offset.cmp(&other.offset)
+        } else {
+            self.table.cmp(&other.table)
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -160,7 +193,8 @@ impl From<&ffi::LogicalType> for LogicalType {
                         .collect(),
                 }
             }
-            LogicalTypeID::NODE | LogicalTypeID::REL => unimplemented!(),
+            LogicalTypeID::NODE => LogicalType::Node,
+            LogicalTypeID::REL => LogicalType::Rel,
             // Should be unreachable, as cxx will check that the LogicalTypeID enum matches the one
             // on the C++ side.
             x => panic!("Unsupported type {:?}", x),
@@ -182,7 +216,9 @@ impl From<&LogicalType> for cxx::UniquePtr<ffi::LogicalType> {
             | LogicalType::Timestamp
             | LogicalType::Interval
             | LogicalType::InternalID
-            | LogicalType::String => ffi::create_logical_type(typ.id()),
+            | LogicalType::String
+            | LogicalType::Node
+            | LogicalType::Rel => ffi::create_logical_type(typ.id()),
             LogicalType::VarList { child_type } => {
                 ffi::create_logical_type_var_list(child_type.as_ref().into())
             }
@@ -199,7 +235,6 @@ impl From<&LogicalType> for cxx::UniquePtr<ffi::LogicalType> {
                 }
                 ffi::create_logical_type_struct(&names, builder)
             }
-            LogicalType::Node | LogicalType::Rel => unimplemented!(),
         }
     }
 }
@@ -271,8 +306,8 @@ pub enum Value {
     FixedList(LogicalType, Vec<Value>),
     /// <https://kuzudb.com/docs/cypher/data-types/struct.html>
     Struct(Vec<(String, Value)>),
-    Node(Box<NodeValue>),
-    Rel(Box<RelValue>),
+    Node(NodeVal),
+    Rel(RelValue),
 }
 
 // TODO: Test that builtin Display matches c++ value toString.
@@ -289,8 +324,8 @@ impl std::fmt::Display for Value {
             Value::Null(_) => write!(f, "null"),
             Value::VarList(_, x) | Value::FixedList(_, x) => {
                 write!(f, "[")?;
-                for i in 0..x.len() {
-                    write!(f, "{}", x[i])?;
+                for (i, value) in x.iter().enumerate() {
+                    write!(f, "{}", value)?;
                     if i != x.len() - 1 {
                         write!(f, ",")?;
                     }
@@ -302,6 +337,16 @@ impl std::fmt::Display for Value {
             Value::Timestamp(x) => write!(f, "{x}"),
             Value::Float(x) => write!(f, "{x}"),
             Value::Double(x) => write!(f, "{x}"),
+            Value::Struct(x) => {
+                write!(f, "{{")?;
+                for (i, (name, value)) in x.iter().enumerate() {
+                    write!(f, "{}:{}", name, value)?;
+                    if i != x.len() - 1 {
+                        write!(f, ",")?;
+                    }
+                }
+                write!(f, "}}")
+            }
             _ => unimplemented!(),
         }
     }
@@ -421,7 +466,22 @@ impl TryFrom<&ffi::Value> for Value {
                 }
                 Ok(Value::Struct(result))
             }
-            LogicalTypeID::NODE => unimplemented!(),
+            LogicalTypeID::NODE => {
+                let ffi_node_val = ffi::value_get_node_val(value);
+                let id = ffi::node_value_get_node_id(ffi_node_val.as_ref().unwrap());
+                let id = InternalID {
+                    offset: id[0],
+                    table: id[1],
+                };
+                let label = ffi::node_value_get_label_name(ffi_node_val.as_ref().unwrap());
+                let mut node_val = NodeVal::new(id, label);
+                let properties = ffi::node_value_get_properties(ffi_node_val.as_ref().unwrap());
+                for i in 0..properties.size() {
+                    node_val
+                        .add_property(properties.get_name(i), properties.get_value(i).try_into()?);
+                }
+                Ok(Value::Node(node_val))
+            }
             LogicalTypeID::REL => unimplemented!(),
             LogicalTypeID::INTERNAL_ID => {
                 let internal_id = ffi::value_get_internal_id(value);
@@ -520,6 +580,13 @@ impl TryInto<cxx::UniquePtr<ffi::Value>> for Value {
 
                 Ok(ffi::get_list_value((&typ).into(), builder))
             }
+            Value::InternalID(value) => {
+                Ok(ffi::create_value_internal_id(value.offset, value.table))
+            }
+            Value::Node(value) => Ok(ffi::create_value_node(
+                Value::InternalID(value.id).try_into()?,
+                Value::String(value.label).try_into()?,
+            )),
             _ => unimplemented!(),
         }
     }
@@ -573,7 +640,7 @@ mod tests {
     use crate::{
         connection::Connection,
         database::Database,
-        value::{LogicalType, Value},
+        value::{InternalID, LogicalType, NodeVal, Value},
     };
     use anyhow::Result;
     use std::collections::HashSet;
@@ -665,6 +732,9 @@ mod tests {
         convert_string_type: LogicalType::String,
         convert_bool_type: LogicalType::Bool,
         convert_struct_type: LogicalType::Struct { fields: vec![("NAME".to_string(), LogicalType::String)]},
+        convert_node_type: LogicalType::Node,
+        convert_internal_id_type: LogicalType::InternalID,
+        convert_rel_type: LogicalType::Rel,
     }
 
     value_tests! {
@@ -685,6 +755,8 @@ mod tests {
             child_type: Box::new(LogicalType::FixedList { child_type: Box::new(LogicalType::Int16), num_elements: 3 })
         }),
         convert_struct: Value::Struct(vec![("NAME".to_string(), "Alice".into()), ("AGE".to_string(), 25.into())]),
+        convert_internal_id: Value::InternalID(InternalID { table: 0, offset: 0 }),
+        convert_node: Value::Node(NodeVal::new(InternalID { table: 0, offset: 0 }, "Test Label".to_string())),
     }
 
     database_tests! {
@@ -706,7 +778,9 @@ mod tests {
         db_string: Value::String("Hello World".to_string()), "STRING",
         db_bool: Value::Bool(true), "BOOLEAN",
         // Causes buffer manager failure
-        // db_null: Value::Null(LogicalType::VarList {
+        // db_null_string: Value::Null(LogicalType::String), "STRING",
+        // db_null_int: Value::Null(LogicalType::Int64), "INT64",
+        // db_null_list: Value::Null(LogicalType::VarList {
         //    child_type: Box::new(LogicalType::FixedList { child_type: Box::new(LogicalType::Int16), num_elements: 3 })
         // }), "INT16[3][]",
     }
