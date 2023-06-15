@@ -64,8 +64,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // used, but linking the tests seems to require that they are defined
         // This will probably not work on windows/macOS
         // openssl-sys has better cross-platform logic, but just using that doesn't work.
-        println!("cargo:rustc-link-lib=dylib=ssl");
-        println!("cargo:rustc-link-lib=dylib=crypto");
+        if env::var("KUZU_TESTING").is_ok() {
+            println!("cargo:rustc-link-lib=dylib=ssl");
+            println!("cargo:rustc-link-lib=dylib=crypto");
+        }
 
         println!("cargo:rustc-link-lib=static=parquet");
         println!("cargo:rustc-link-lib=static=arrow");
