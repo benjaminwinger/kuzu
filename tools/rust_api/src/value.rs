@@ -824,6 +824,32 @@ mod tests {
     }
 
     #[test]
+    fn test_node() -> Result<()> {
+        let temp_dir = tempdir::TempDir::new("example")?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let conn = Connection::new(&db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
+        conn.query("CREATE (:Person {name: \"Alice\", age: 25});")?;
+        let result = conn.query("MATCH (a:Person) RETURN a;")?.next().unwrap();
+        assert_eq!(
+            result[0],
+            Value::Node(NodeVal {
+                id: InternalID {
+                    table_id: 0,
+                    offset: 0
+                },
+                label: "Person".to_string(),
+                properties: vec![
+                    ("name".to_string(), Value::String("Alice".to_string())),
+                    ("age".to_string(), Value::Int64(25))
+                ]
+            })
+        );
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
     /// Test that null values are read correctly by the API
     fn test_null() -> Result<()> {
         let temp_dir = tempdir::TempDir::new("example")?;
