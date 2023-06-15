@@ -93,13 +93,13 @@ pub struct RelValue {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InternalID {
-    pub(crate) offset: u64,
-    pub(crate) table: u64,
+    pub offset: u64,
+    pub table_id: u64,
 }
 
 impl std::fmt::Display for InternalID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.table, self.offset)
+        write!(f, "{}:{}", self.table_id, self.offset)
     }
 }
 
@@ -111,10 +111,10 @@ impl PartialOrd for InternalID {
 
 impl Ord for InternalID {
     fn cmp(&self, other: &Self) -> Ordering {
-        if self.table == other.table {
+        if self.table_id == other.table_id {
             self.offset.cmp(&other.offset)
         } else {
-            self.table.cmp(&other.table)
+            self.table_id.cmp(&other.table_id)
         }
     }
 }
@@ -326,7 +326,7 @@ impl TryFrom<&ffi::Value> for Value {
                 let id = ffi::node_value_get_node_id(ffi_node_val.as_ref().unwrap());
                 let id = InternalID {
                     offset: id[0],
-                    table: id[1],
+                    table_id: id[1],
                 };
                 let label = ffi::node_value_get_label_name(ffi_node_val.as_ref().unwrap());
                 let mut node_val = NodeVal::new(id, label);
@@ -340,8 +340,7 @@ impl TryFrom<&ffi::Value> for Value {
             LogicalTypeID::REL => unimplemented!(),
             LogicalTypeID::INTERNAL_ID => {
                 let internal_id = ffi::value_get_internal_id(value);
-                let (offset, table) = (internal_id[0], internal_id[1]);
-                Ok(Value::InternalID(InternalID { offset, table }))
+                Ok(Value::InternalID(InternalID { offset: internal_id[0], table_id: internal_id[1] }))
             }
             // Should be unreachable, as cxx will check that the LogicalTypeID enum matches the one
             // on the C++ side.
