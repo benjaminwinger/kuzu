@@ -33,9 +33,11 @@ mod error;
 mod ffi;
 mod query_result;
 mod value;
+mod logical_type;
 
 pub use connection::{Connection, PreparedStatement};
 pub use database::{Database, LoggingLevel};
 pub use error::Error;
 pub use query_result::QueryResult;
-pub use value::{LogicalType, Value};
+pub use value::Value;
+pub use logical_type::LogicalType;

@@ -3,6 +3,7 @@ use crate::value::Value;
 use cxx::UniquePtr;
 use std::convert::TryInto;
 use std::fmt;
+use crate::logical_type::LogicalType;
 
 /// Stores the result of a query execution
 pub struct QueryResult {
@@ -79,7 +80,7 @@ impl QueryResult {
     pub fn get_column_names(&self) -> Vec<String> {
         ffi::query_result_column_names(self.result.as_ref().unwrap())
     }
-    pub fn get_column_data_types(&self) -> Vec<crate::value::LogicalType> {
+    pub fn get_column_data_types(&self) -> Vec<LogicalType> {
         ffi::query_result_column_data_types(self.result.as_ref().unwrap())
             .as_ref()
             .unwrap()
@@ -152,7 +153,7 @@ impl std::fmt::Display for QueryResult {
 mod tests {
     use crate::connection::Connection;
     use crate::database::Database;
-    use crate::value::LogicalType;
+    use crate::logical_type::LogicalType;
     #[test]
     fn test_query_result_metadata() -> anyhow::Result<()> {
         let temp_dir = tempdir::TempDir::new("example")?;
