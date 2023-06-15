@@ -82,7 +82,7 @@ fn properties_display(
 
 impl std::fmt::Display for NodeVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(label: {}, {}, ", self.label, self.id)?;
+        write!(f, "(label:{}, {}, ", self.label, self.id)?;
         properties_display(f, &self.properties)?;
         write!(f, ")")
     }
@@ -208,7 +208,6 @@ pub enum Value {
     Rel(RelVal),
 }
 
-// TODO: Test that builtin Display matches c++ value toString.
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -219,7 +218,7 @@ impl std::fmt::Display for Value {
             Value::Int64(x) => write!(f, "{x}"),
             Value::Date(x) => write!(f, "{x}"),
             Value::String(x) => write!(f, "{x}"),
-            Value::Null(_) => write!(f, "null"),
+            Value::Null(_) => write!(f, ""),
             Value::VarList(_, x) | Value::FixedList(_, x) => {
                 write!(f, "[")?;
                 for (i, value) in x.iter().enumerate() {
@@ -238,14 +237,16 @@ impl std::fmt::Display for Value {
             Value::Struct(x) => {
                 write!(f, "{{")?;
                 for (i, (name, value)) in x.iter().enumerate() {
-                    write!(f, "{}:{}", name, value)?;
+                    write!(f, "{}: {}", name, value)?;
                     if i != x.len() - 1 {
-                        write!(f, ",")?;
+                        write!(f, ", ")?;
                     }
                 }
                 write!(f, "}}")
             }
-            _ => unimplemented!(),
+            Value::Node(x) => write!(f, "{x}"),
+            Value::Rel(x) => write!(f, "{x}"),
+            Value::InternalID(x) => write!(f, "{x}"),
         }
     }
 }
@@ -403,7 +404,10 @@ impl TryFrom<&ffi::Value> for Value {
             }
             LogicalTypeID::INTERNAL_ID => {
                 let internal_id = ffi::value_get_internal_id(value);
-                Ok(Value::InternalID(InternalID { offset: internal_id[0], table_id: internal_id[1] }))
+                Ok(Value::InternalID(InternalID {
+                    offset: internal_id[0],
+                    table_id: internal_id[1],
+                }))
             }
             // Should be unreachable, as cxx will check that the LogicalTypeID enum matches the one
             // on the C++ side.
@@ -572,7 +576,8 @@ mod tests {
     use crate::{
         connection::Connection,
         database::Database,
-        value::{InternalID, LogicalType, NodeVal, Value},
+        logical_type::LogicalType,
+        value::{InternalID, NodeVal, RelVal, Value},
     };
     use anyhow::Result;
     use std::collections::HashSet;
@@ -608,9 +613,23 @@ mod tests {
             fn $name() -> Result<()> {
                 let rust_value: Value = $value;
                 let value: cxx::UniquePtr<ffi::Value> = rust_value.clone().try_into()?;
-                //assert_eq!(ffi::value_to_string(value.as_ref().unwrap()), format!("{rust_value}"));
                 let new_rust_value: Value = value.as_ref().unwrap().try_into()?;
                 assert_eq!(new_rust_value, rust_value);
+                Ok(())
+            }
+        )*
+        }
+    }
+
+    macro_rules! display_tests {
+        ($($name:ident: $value:expr,)*) => {
+        $(
+            #[test]
+            /// Tests that the values are correctly converted into kuzu::common::Value and back
+            fn $name() -> Result<()> {
+                let rust_value: Value = $value;
+                let value: cxx::UniquePtr<ffi::Value> = rust_value.clone().try_into()?;
+                assert_eq!(ffi::value_to_string(value.as_ref().unwrap()), format!("{rust_value}"));
                 Ok(())
             }
         )*
@@ -687,9 +706,30 @@ mod tests {
             child_type: Box::new(LogicalType::FixedList { child_type: Box::new(LogicalType::Int16), num_elements: 3 })
         }),
         convert_struct: Value::Struct(vec![("NAME".to_string(), "Alice".into()), ("AGE".to_string(), 25.into())]),
-        convert_internal_id: Value::InternalID(InternalID { table: 0, offset: 0 }),
-        convert_node: Value::Node(NodeVal::new(InternalID { table: 0, offset: 0 }, "Test Label".to_string())),
-        convert_rel: Value::Rel(RelVal::new(InternalID { table: 0, offset: 0 }, InternalID { table: 1, offset: 0 }, "Test Label".to_string())),
+        convert_internal_id: Value::InternalID(InternalID { table_id: 0, offset: 0 }),
+        convert_node: Value::Node(NodeVal::new(InternalID { table_id: 0, offset: 0 }, "Test Label".to_string())),
+        convert_rel: Value::Rel(RelVal::new(InternalID { table_id: 0, offset: 0 }, InternalID { table_id: 1, offset: 0 }, "Test Label".to_string())),
+    }
+
+    display_tests! {
+        display_var_list: Value::VarList(LogicalType::String, vec!["Alice".into(), "Bob".into()]),
+        display_var_list_empty: Value::VarList(LogicalType::String, vec![]),
+        display_fixed_list: Value::FixedList(LogicalType::String, vec!["Alice".into(), "Bob".into()]),
+        display_int16: Value::Int16(1),
+        display_int32: Value::Int32(2),
+        display_int64: Value::Int64(3),
+        // Float, doble, interval and timestamp have display differences which we probably don't want to
+        // reconcile
+        display_date: Value::Date(date!(2023-06-13)),
+        display_string: Value::String("Hello World".to_string()),
+        display_bool: Value::Bool(false),
+        display_null: Value::Null(LogicalType::VarList {
+            child_type: Box::new(LogicalType::FixedList { child_type: Box::new(LogicalType::Int16), num_elements: 3 })
+        }),
+        display_struct: Value::Struct(vec![("NAME".to_string(), "Alice".into()), ("AGE".to_string(), 25.into())]),
+        display_internal_id: Value::InternalID(InternalID { table_id: 0, offset: 0 }),
+        display_node: Value::Node(NodeVal::new(InternalID { table_id: 0, offset: 0 }, "Test Label".to_string())),
+        display_rel: Value::Rel(RelVal::new(InternalID { table_id: 0, offset: 0 }, InternalID { table_id: 1, offset: 0 }, "Test Label".to_string())),
     }
 
     database_tests! {
