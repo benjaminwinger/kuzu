@@ -87,7 +87,7 @@ std::unique_ptr<std::vector<kuzu::common::LogicalType>> query_result_column_data
     const kuzu::main::QueryResult& query_result);
 rust::Vec<rust::String> query_result_column_names(const kuzu::main::QueryResult& query_result);
 
-/* NodeVal */
+/* NodeVal/RelVal */
 struct PropertyList {
     const std::vector<std::pair<std::string, std::unique_ptr<kuzu::common::Value>>>& properties;
 
@@ -100,9 +100,21 @@ struct PropertyList {
     }
 };
 
-std::unique_ptr<PropertyList> node_value_get_properties(const kuzu::common::NodeVal& val);
+template<typename T>
+rust::String value_get_label_name(const T& val) {
+    return val.getLabelName();
+}
+template<typename T>
+std::unique_ptr<PropertyList> value_get_properties(const T& val) {
+    return std::make_unique<PropertyList>(val.getProperties());
+}
+
+/* NodeVal */
 std::array<uint64_t, 2> node_value_get_node_id(const kuzu::common::NodeVal& val);
-rust::String node_value_get_label_name(const kuzu::common::NodeVal& val);
+
+/* RelVal */
+std::array<uint64_t, 2> rel_value_get_src_id(const kuzu::common::RelVal& val);
+std::array<uint64_t, 2> rel_value_get_dst_id(const kuzu::common::RelVal& val);
 
 /* FlatTuple */
 const kuzu::common::Value& flat_tuple_get_value(
@@ -110,7 +122,12 @@ const kuzu::common::Value& flat_tuple_get_value(
 
 /* Value */
 rust::String value_get_string(const kuzu::common::Value& value);
-std::unique_ptr<kuzu::common::NodeVal> value_get_node_val(const kuzu::common::Value& value);
+
+template<typename T>
+std::unique_ptr<T> value_get_unique(const kuzu::common::Value& value) {
+    return std::make_unique<T>(value.getValue<T>());
+}
+
 int64_t value_get_interval_secs(const kuzu::common::Value& value);
 int32_t value_get_interval_micros(const kuzu::common::Value& value);
 int32_t value_get_date_days(const kuzu::common::Value& value);
@@ -132,6 +149,8 @@ std::unique_ptr<kuzu::common::Value> create_value_null(
 std::unique_ptr<kuzu::common::Value> create_value_internal_id(uint64_t offset, uint64_t table);
 std::unique_ptr<kuzu::common::Value> create_value_node(
     std::unique_ptr<kuzu::common::Value> id_val, std::unique_ptr<kuzu::common::Value> label_val);
+std::unique_ptr<kuzu::common::Value> create_value_rel(std::unique_ptr<kuzu::common::Value> src_id,
+    std::unique_ptr<kuzu::common::Value> dst_id, std::unique_ptr<kuzu::common::Value> label_val);
 
 template<typename T>
 std::unique_ptr<kuzu::common::Value> create_value(const T value) {
@@ -147,5 +166,8 @@ struct ValueListBuilder {
 std::unique_ptr<kuzu::common::Value> get_list_value(
     std::unique_ptr<kuzu::common::LogicalType> typ, std::unique_ptr<ValueListBuilder> value);
 std::unique_ptr<ValueListBuilder> create_list();
+
+void value_add_property(kuzu::common::Value& val, const rust::String& name,
+    std::unique_ptr<kuzu::common::Value> property);
 
 } // namespace kuzu_rs

@@ -89,7 +89,50 @@ impl std::fmt::Display for NodeVal {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct RelValue {}
+pub struct RelVal {
+    src_node: InternalID,
+    dst_node: InternalID,
+    label: String,
+    properties: Vec<(String, Value)>,
+}
+
+impl RelVal {
+    pub fn new(src_node: InternalID, dst_node: InternalID, label: String) -> Self {
+        RelVal {
+            src_node,
+            dst_node,
+            label,
+            properties: vec![],
+        }
+    }
+
+    pub fn get_src_node(&self) -> &InternalID {
+        &self.src_node
+    }
+    pub fn get_dst_node(&self) -> &InternalID {
+        &self.dst_node
+    }
+
+    pub fn get_label_name(&self) -> &String {
+        &self.label
+    }
+
+    pub fn add_property(&mut self, key: String, value: Value) {
+        self.properties.push((key, value));
+    }
+
+    pub fn get_properties(&self) -> &Vec<(String, Value)> {
+        &self.properties
+    }
+}
+
+impl std::fmt::Display for RelVal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "({})-[label:{}, ", self.src_node, self.label)?;
+        properties_display(f, &self.properties)?;
+        write!(f, "]->({})", self.dst_node)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InternalID {
@@ -162,7 +205,7 @@ pub enum Value {
     /// <https://kuzudb.com/docs/cypher/data-types/struct.html>
     Struct(Vec<(String, Value)>),
     Node(NodeVal),
-    Rel(RelValue),
+    Rel(RelVal),
 }
 
 // TODO: Test that builtin Display matches c++ value toString.
@@ -337,7 +380,27 @@ impl TryFrom<&ffi::Value> for Value {
                 }
                 Ok(Value::Node(node_val))
             }
-            LogicalTypeID::REL => unimplemented!(),
+            LogicalTypeID::REL => {
+                let ffi_rel_val = ffi::value_get_rel_val(value);
+                let src_node = ffi::rel_value_get_src_id(ffi_rel_val.as_ref().unwrap());
+                let dst_node = ffi::rel_value_get_dst_id(ffi_rel_val.as_ref().unwrap());
+                let src_node = InternalID {
+                    offset: src_node[0],
+                    table_id: src_node[1],
+                };
+                let dst_node = InternalID {
+                    offset: dst_node[0],
+                    table_id: dst_node[1],
+                };
+                let label = ffi::rel_value_get_label_name(ffi_rel_val.as_ref().unwrap());
+                let mut rel_val = RelVal::new(src_node, dst_node, label);
+                let properties = ffi::rel_value_get_properties(ffi_rel_val.as_ref().unwrap());
+                for i in 0..properties.size() {
+                    rel_val
+                        .add_property(properties.get_name(i), properties.get_value(i).try_into()?);
+                }
+                Ok(Value::Rel(rel_val))
+            }
             LogicalTypeID::INTERNAL_ID => {
                 let internal_id = ffi::value_get_internal_id(value);
                 Ok(Value::InternalID(InternalID { offset: internal_id[0], table_id: internal_id[1] }))
@@ -428,20 +491,35 @@ impl TryInto<cxx::UniquePtr<ffi::Value>> for Value {
 
                 let mut builder = ffi::create_list();
                 for (_, elem) in value {
-                    //builder.pin_mut().insert(Value::String(name).try_into()?);
                     builder.pin_mut().insert(elem.try_into()?);
                 }
 
                 Ok(ffi::get_list_value((&typ).into(), builder))
             }
             Value::InternalID(value) => {
-                Ok(ffi::create_value_internal_id(value.offset, value.table))
+                Ok(ffi::create_value_internal_id(value.offset, value.table_id))
             }
-            Value::Node(value) => Ok(ffi::create_value_node(
-                Value::InternalID(value.id).try_into()?,
-                Value::String(value.label).try_into()?,
-            )),
-            _ => unimplemented!(),
+            Value::Node(value) => {
+                let mut node = ffi::create_value_node(
+                    Value::InternalID(value.id).try_into()?,
+                    Value::String(value.label).try_into()?,
+                );
+                for (name, property) in value.properties {
+                    ffi::value_add_property(node.pin_mut(), &name, property.try_into()?);
+                }
+                Ok(node)
+            }
+            Value::Rel(value) => {
+                let mut rel = ffi::create_value_rel(
+                    Value::InternalID(value.src_node).try_into()?,
+                    Value::InternalID(value.dst_node).try_into()?,
+                    Value::String(value.label).try_into()?,
+                );
+                for (name, property) in value.properties {
+                    ffi::value_add_property(rel.pin_mut(), &name, property.try_into()?);
+                }
+                Ok(rel)
+            }
         }
     }
 }
@@ -611,6 +689,7 @@ mod tests {
         convert_struct: Value::Struct(vec![("NAME".to_string(), "Alice".into()), ("AGE".to_string(), 25.into())]),
         convert_internal_id: Value::InternalID(InternalID { table: 0, offset: 0 }),
         convert_node: Value::Node(NodeVal::new(InternalID { table: 0, offset: 0 }, "Test Label".to_string())),
+        convert_rel: Value::Rel(RelVal::new(InternalID { table: 0, offset: 0 }, InternalID { table: 1, offset: 0 }, "Test Label".to_string())),
     }
 
     database_tests! {

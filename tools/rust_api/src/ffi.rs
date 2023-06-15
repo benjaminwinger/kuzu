@@ -232,7 +232,10 @@ pub(crate) mod ffi {
         fn getValue(&self) -> f64;
 
         fn value_get_string(value: &Value) -> String;
-        fn value_get_node_val(value: &Value) -> UniquePtr<NodeVal>;
+        #[rust_name = "value_get_node_val"]
+        fn value_get_unique(value: &Value) -> UniquePtr<NodeVal>;
+        #[rust_name = "value_get_rel_val"]
+        fn value_get_unique(value: &Value) -> UniquePtr<RelVal>;
         fn value_get_interval_secs(value: &Value) -> i64;
         fn value_get_interval_micros(value: &Value) -> i32;
         fn value_get_timestamp_micros(value: &Value) -> i64;
@@ -268,6 +271,13 @@ pub(crate) mod ffi {
             id_val: UniquePtr<Value>,
             label_val: UniquePtr<Value>,
         ) -> UniquePtr<Value>;
+        fn create_value_rel(
+            src_id: UniquePtr<Value>,
+            dst_id: UniquePtr<Value>,
+            label_val: UniquePtr<Value>,
+        ) -> UniquePtr<Value>;
+
+        fn value_add_property(value: Pin<&mut Value>, name: &String, property: UniquePtr<Value>);
     }
 
     #[namespace = "kuzu_rs"]
@@ -284,8 +294,24 @@ pub(crate) mod ffi {
         #[namespace = "kuzu::common"]
         type NodeVal;
 
-        fn node_value_get_properties<'a>(node_value: &'a NodeVal) -> UniquePtr<PropertyList<'a>>;
+        #[rust_name = "node_value_get_properties"]
+        fn value_get_properties<'a>(node_value: &'a NodeVal) -> UniquePtr<PropertyList<'a>>;
         fn node_value_get_node_id(value: &NodeVal) -> [u64; 2];
-        fn node_value_get_label_name(value: &NodeVal) -> String;
+        #[rust_name = "node_value_get_label_name"]
+        fn value_get_label_name(value: &NodeVal) -> String;
+    }
+
+    #[namespace = "kuzu_rs"]
+    unsafe extern "C++" {
+        #[namespace = "kuzu::common"]
+        type RelVal;
+
+        #[rust_name = "rel_value_get_properties"]
+        fn value_get_properties<'a>(node_value: &'a RelVal) -> UniquePtr<PropertyList<'a>>;
+        #[rust_name = "rel_value_get_label_name"]
+        fn value_get_label_name(value: &RelVal) -> String;
+
+        fn rel_value_get_src_id(value: &RelVal) -> [u64; 2];
+        fn rel_value_get_dst_id(value: &RelVal) -> [u64; 2];
     }
 }
