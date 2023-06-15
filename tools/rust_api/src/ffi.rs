@@ -1,6 +1,7 @@
 #[cxx::bridge]
 pub(crate) mod ffi {
     // From types.h
+    // Note: cxx will check if values change, but not if they are added.
     #[namespace = "kuzu::common"]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum LogicalTypeID {
@@ -26,10 +27,14 @@ pub(crate) mod ffi {
 
         INTERNAL_ID = 40,
 
+        ARROW_COLUMN = 41,
+
         // variable size types
         STRING = 50,
         VAR_LIST = 52,
         STRUCT = 53,
+        MAP = 54,
+        UNION = 55,
     }
     #[namespace = "kuzu::common"]
     unsafe extern "C++" {
