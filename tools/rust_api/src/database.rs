@@ -13,6 +13,7 @@ pub struct Database {
 unsafe impl Send for Database {}
 unsafe impl Sync for Database {}
 
+/// Logging level of the database instance
 pub enum LoggingLevel {
     Debug,
     Info,

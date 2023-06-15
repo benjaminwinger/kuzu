@@ -33,6 +33,8 @@ impl std::error::Error for ConversionError {
     }
 }
 
+/// NodeVal represents a node in the graph and stores the nodeID, label and properties of that
+/// node.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeVal {
     id: InternalID,
@@ -57,10 +59,15 @@ impl NodeVal {
         &self.label
     }
 
+    /// Adds a property with the given key/value pair to the NodeVal
+    /// # Arguments
+    /// * `key`: The name of the property
+    /// * `value`: The value of the property
     pub fn add_property(&mut self, key: String, value: Value) {
         self.properties.push((key, value));
     }
 
+    /// Returns all properties of the NodeVal
     pub fn get_properties(&self) -> &Vec<(String, Value)> {
         &self.properties
     }
@@ -88,6 +95,8 @@ impl std::fmt::Display for NodeVal {
     }
 }
 
+/// RelVal represents a relationship in the graph and stores the relID, src/dst nodes and properties of that
+/// rel
 #[derive(Clone, Debug, PartialEq)]
 pub struct RelVal {
     src_node: InternalID,
@@ -117,10 +126,15 @@ impl RelVal {
         &self.label
     }
 
+    /// Adds a property with the given key/value pair to the NodeVal
+    /// # Arguments
+    /// * `key`: The name of the property
+    /// * `value`: The value of the property
     pub fn add_property(&mut self, key: String, value: Value) {
         self.properties.push((key, value));
     }
 
+    /// Returns all properties of the RelVal
     pub fn get_properties(&self) -> &Vec<(String, Value)> {
         &self.properties
     }
@@ -134,6 +148,7 @@ impl std::fmt::Display for RelVal {
     }
 }
 
+/// Stores the table_id and offset of a node/rel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InternalID {
     pub offset: u64,

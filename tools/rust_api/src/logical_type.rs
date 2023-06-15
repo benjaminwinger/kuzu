@@ -1,30 +1,51 @@
 use crate::ffi::ffi;
 
+/// Type of [Value](crate::value::Value)s produced and consumed by queries.
+///
+/// Includes extra type information beyond what can be encoded in [Value](crate::value::Value) such as
+/// struct fields and types of lists
 #[derive(Clone, Debug, PartialEq)]
 pub enum LogicalType {
+    /// Special type for use with [Value::Null](crate::value::Value::Null)
     Any,
+    /// Correponds to [Value::Bool](crate::value::Value::Bool)
     Bool,
+    /// Correponds to [Value::Int64](crate::value::Value::Int64)
     Int64,
+    /// Correponds to [Value::Int32](crate::value::Value::Int32)
     Int32,
+    /// Correponds to [Value::Int16](crate::value::Value::Int16)
     Int16,
+    /// Correponds to [Value::Double](crate::value::Value::Double)
     Double,
+    /// Correponds to [Value::Float](crate::value::Value::Float)
     Float,
+    /// Correponds to [Value::Date](crate::value::Value::Date)
     Date,
+    /// Correponds to [Value::Interval](crate::value::Value::Interval)
     Interval,
+    /// Correponds to [Value::Timestamp](crate::value::Value::Timestamp)
     Timestamp,
+    /// Correponds to [Value::InternalID](crate::value::Value::InternalID)
     InternalID,
+    /// Correponds to [Value::String](crate::value::Value::String)
     String,
+    /// Correponds to [Value::VarList](crate::value::Value::VarList)
     VarList {
         child_type: Box<LogicalType>,
     },
+    /// Correponds to [Value::FixedList](crate::value::Value::FixedList)
     FixedList {
         child_type: Box<LogicalType>,
         num_elements: u64,
     },
+    /// Correponds to [Value::Struct](crate::value::Value::Struct)
     Struct {
         fields: Vec<(String, LogicalType)>,
     },
+    /// Correponds to [Value::Node](crate::value::Value::Node)
     Node,
+    /// Correponds to [Value::Rel](crate::value::Value::Rel)
     Rel,
 }
 
