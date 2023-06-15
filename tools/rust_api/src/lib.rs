@@ -31,13 +31,13 @@ mod connection;
 mod database;
 mod error;
 mod ffi;
+mod logical_type;
 mod query_result;
 mod value;
-mod logical_type;
 
 pub use connection::{Connection, PreparedStatement};
 pub use database::{Database, LoggingLevel};
 pub use error::Error;
+pub use logical_type::LogicalType;
 pub use query_result::QueryResult;
 pub use value::Value;
-pub use logical_type::LogicalType;

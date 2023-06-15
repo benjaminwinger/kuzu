@@ -230,7 +230,7 @@ pub(crate) mod ffi {
         fn getValue(&self) -> f32;
         #[rust_name = "get_value_double"]
         fn getValue(&self) -> f64;
-        
+
         fn value_get_string(value: &Value) -> String;
         fn value_get_node_val(value: &Value) -> UniquePtr<NodeVal>;
         fn value_get_interval_secs(value: &Value) -> i64;
@@ -264,7 +264,10 @@ pub(crate) mod ffi {
         fn create_value_date(value: i64) -> UniquePtr<Value>;
         fn create_value_interval(months: i32, days: i32, micros: i64) -> UniquePtr<Value>;
         fn create_value_internal_id(offset: u64, table: u64) -> UniquePtr<Value>;
-        fn create_value_node(id_val: UniquePtr<Value>, label_val: UniquePtr<Value>) -> UniquePtr<Value>;
+        fn create_value_node(
+            id_val: UniquePtr<Value>,
+            label_val: UniquePtr<Value>,
+        ) -> UniquePtr<Value>;
     }
 
     #[namespace = "kuzu_rs"]

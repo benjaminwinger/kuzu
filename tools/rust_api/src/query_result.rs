@@ -1,9 +1,9 @@
 use crate::ffi::ffi;
+use crate::logical_type::LogicalType;
 use crate::value::Value;
 use cxx::UniquePtr;
 use std::convert::TryInto;
 use std::fmt;
-use crate::logical_type::LogicalType;
 
 /// Stores the result of a query execution
 pub struct QueryResult {

@@ -214,7 +214,8 @@ std::unique_ptr<kuzu::common::Value> create_value_internal_id(uint64_t offset, u
 }
 std::unique_ptr<Value> create_value_node(
     std::unique_ptr<Value> id_val, std::unique_ptr<Value> label_val) {
-    return std::make_unique<Value>(std::make_unique<kuzu::common::NodeVal>(std::move(id_val), std::move(label_val)));
+    return std::make_unique<Value>(
+        std::make_unique<kuzu::common::NodeVal>(std::move(id_val), std::move(label_val)));
 }
 
 std::unique_ptr<kuzu::common::Value> get_list_value(
