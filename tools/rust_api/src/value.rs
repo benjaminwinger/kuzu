@@ -33,10 +33,6 @@ impl std::error::Error for ConversionError {
     }
 }
 
-trait CppValue {
-    fn get_cpp_value(self) -> ffi::Value;
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeVal {
     id: InternalID,
