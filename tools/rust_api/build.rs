@@ -9,25 +9,44 @@ fn link_mode() -> &'static str {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     // There is a kuzu-src symlink pointing to the root of the repo since Cargo
     // only looks at the files within the rust project when packaging crates.
     // Using a symlink the library can both be built in-source and from a crate.
-    let kuzu_root = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("kuzu-src");
+    let kuzu_root = {
+        let root = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("kuzu-src");
+        if root.is_dir() {
+            root
+        } else {
+            // If the path is not directory, this is probably an in-source build on windows where the
+            // symlink is unreadable.
+            Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..")
+        }
+    };
     // Windows fails to link on windows unless CFLAGS and CXXFLAGS are overridden
     // If they are, assume the user knows what they are doing. Otherwise just link against the
     // release version of kuzu even in debug mode.
     let target = if cfg!(windows) && std::env::var("CXXFLAGS").is_err() {
         "release".to_string()
     } else {
-        env::var("PROFILE")?
+        env::var("PROFILE").unwrap()
     };
     let kuzu_cmake_root = kuzu_root.join(format!("build/{target}"));
     let mut command = std::process::Command::new("make");
+    let threads = env::var("NUM_THREADS")
+        .map(|x| x.parse::<usize>())
+        .unwrap_or_else(|_| Ok(num_cpus::get()))
+        .unwrap();
     command
-        .args(&[&target, &format!("NUM_THREADS={}", num_cpus::get())])
+        .args(&[&target, &format!("NUM_THREADS={}", threads)])
         .current_dir(&kuzu_root);
-    let make_status = command.status()?;
+    let make_status = command.status().unwrap_or_else(|_| {
+        panic!(
+            "Running make {} on {}/Makefile failed!",
+            &target,
+            &kuzu_root.display()
+        )
+    });
     assert!(make_status.success());
 
     let kuzu_lib_path = kuzu_cmake_root.join("src");
@@ -134,6 +153,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         build.flag_if_supported("-std=c++20");
     }
     build.compile("kuzu_rs");
-
-    Ok(())
 }
