@@ -14,11 +14,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // only looks at the files within the rust project when packaging crates.
     // Using a symlink the library can both be built in-source and from a crate.
     let kuzu_root = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("kuzu-src");
-    let target = env::var("PROFILE")?;
+    // Windows fails to link on windows unless CFLAGS and CXXFLAGS are overridden
+    // If they are, assume the user knows what they are doing. Otherwise just link against the
+    // release version of kuzu even in debug mode.
+    let target = if cfg!(windows) && std::env::var("CXXFLAGS").is_err() {
+        "release".to_string()
+    } else {
+        env::var("PROFILE")?
+    };
     let kuzu_cmake_root = kuzu_root.join(format!("build/{target}"));
     let mut command = std::process::Command::new("make");
     command
-        .args(&[target, format!("NUM_THREADS={}", num_cpus::get())])
+        .args(&[&target, &format!("NUM_THREADS={}", num_cpus::get())])
         .current_dir(&kuzu_root);
     let make_status = command.status()?;
     assert!(make_status.success());
@@ -58,20 +65,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:rustc-link-lib={}=kuzu", link_mode());
     if link_mode() == "static" {
-        println!("cargo:rustc-link-lib=dylib=stdc++");
-
-        println!("cargo:rustc-link-lib=static=arrow_bundled_dependencies");
-        // Dependencies of arrow's bundled dependencies
-        // Only seems to be necessary when building tests.
-        // This will probably not work on windows/macOS
-        // openssl-sys has better cross-platform logic, but just using that doesn't work.
-        if env::var("KUZU_TESTING").is_ok() {
-            println!("cargo:rustc-link-lib=dylib=ssl");
-            println!("cargo:rustc-link-lib=dylib=crypto");
+        if cfg!(windows) {
+            if target == "debug" {
+                println!("cargo:rustc-link-lib=dylib=msvcrtd");
+            } else {
+                println!("cargo:rustc-link-lib=dylib=msvcrt");
+            }
+            println!("cargo:rustc-link-lib=dylib=shell32");
+            println!("cargo:rustc-link-lib=dylib=ole32");
+        } else {
+            println!("cargo:rustc-link-lib=dylib=stdc++");
         }
 
-        println!("cargo:rustc-link-lib=static=parquet");
-        println!("cargo:rustc-link-lib=static=arrow");
+        println!("cargo:rustc-link-lib=static=arrow_bundled_dependencies");
+        // arrow's bundled dependencies link against openssl when it's on the system, whether
+        // requested or not.
+        // Only seems to be necessary when building tests.
+        if env::var("KUZU_TESTING").is_ok() {
+            if cfg!(windows) {
+                // Find openssl library relative to the path of the openssl executable
+                // Or fall back to OPENSSL_DIR
+                #[cfg(windows)]
+                if let Ok(mut path) = which::which("openssl") {
+                    path.pop();
+                    path.pop();
+                    println!("cargo:rustc-link-search=native={}/lib", path.display());
+                } else {
+                    println!(
+                        "cargo:rustc-link-search=native={}/lib",
+                        env::var("OPENSSL_DIR").expect(
+                            "OPENSSL_DIR must be set if the openssl library cannot be found\
+                            using the path of the openssl executable"
+                        )
+                    );
+                }
+                println!("cargo:rustc-link-lib=dylib=libssl");
+                println!("cargo:rustc-link-lib=dylib=libcrypto");
+            } else {
+                println!("cargo:rustc-link-lib=dylib=ssl");
+                println!("cargo:rustc-link-lib=dylib=crypto");
+            }
+        }
+
+        if cfg!(windows) {
+            println!("cargo:rustc-link-lib=static=parquet_static");
+            println!("cargo:rustc-link-lib=static=arrow_static");
+        } else {
+            println!("cargo:rustc-link-lib=static=parquet");
+            println!("cargo:rustc-link-lib=static=arrow");
+        }
 
         println!("cargo:rustc-link-lib=static=utf8proc");
         println!("cargo:rustc-link-lib=static=antlr4_cypher");
@@ -83,11 +125,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=include/kuzu_rs.h");
     println!("cargo:rerun-if-changed=include/kuzu_rs.cpp");
 
-    cxx_build::bridge("src/ffi.rs")
-        .file("src/kuzu_rs.cpp")
-        .flag_if_supported("-std=c++20")
-        .includes(include_paths)
-        .compile("kuzu_rs");
+    let mut build = cxx_build::bridge("src/ffi.rs");
+    build.file("src/kuzu_rs.cpp").includes(include_paths);
+
+    if cfg!(windows) {
+        build.flag("/std:c++20");
+    } else {
+        build.flag_if_supported("-std=c++20");
+    }
+    build.compile("kuzu_rs");
 
     Ok(())
 }
