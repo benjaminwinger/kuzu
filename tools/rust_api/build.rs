@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kuzu_cmake_root = kuzu_root.join(format!("build/{target}"));
     let mut command = std::process::Command::new("make");
     command
-        .args(&[target, format!("NUM_THREADS={}", num_cpus::get())])
+        .args(&[&target, &format!("NUM_THREADS={}", num_cpus::get())])
         .current_dir(&kuzu_root);
     let make_status = command.status()?;
     assert!(make_status.success());
@@ -58,7 +58,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:rustc-link-lib={}=kuzu", link_mode());
     if link_mode() == "static" {
-        println!("cargo:rustc-link-lib=dylib=stdc++");
+        if cfg!(windows) {
+            if target == "debug" {
+                println!("cargo:rustc-link-lib=dylib=msvcrtd");
+            } else {
+                println!("cargo:rustc-link-lib=dylib=msvcrt");
+            }
+            println!("cargo:rustc-link-lib=dylib=shell32");
+            println!("cargo:rustc-link-lib=dylib=ole32");
+        } else {
+            println!("cargo:rustc-link-lib=dylib=stdc++");
+        }
 
         println!("cargo:rustc-link-lib=static=arrow_bundled_dependencies");
         // Dependencies of arrow's bundled dependencies
@@ -66,13 +76,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // used, but linking the tests seems to require that they are defined
         // This will probably not work on windows/macOS
         // openssl-sys has better cross-platform logic, but just using that doesn't work.
-        if env::var("KUZU_TESTING").is_ok() {
+        if env::var("KUZU_TESTING").is_ok() && !cfg!(windows) {
             println!("cargo:rustc-link-lib=dylib=ssl");
             println!("cargo:rustc-link-lib=dylib=crypto");
         }
 
-        println!("cargo:rustc-link-lib=static=parquet");
-        println!("cargo:rustc-link-lib=static=arrow");
+        if cfg!(windows) {
+            println!("cargo:rustc-link-lib=static=parquet_static");
+            println!("cargo:rustc-link-lib=static=arrow_static");
+        } else {
+            println!("cargo:rustc-link-lib=static=parquet");
+            println!("cargo:rustc-link-lib=static=arrow");
+        }
 
         println!("cargo:rustc-link-lib=static=utf8proc");
         println!("cargo:rustc-link-lib=static=antlr4_cypher");
@@ -84,11 +99,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=include/kuzu_rs.h");
     println!("cargo:rerun-if-changed=include/kuzu_rs.cpp");
 
-    cxx_build::bridge("src/ffi.rs")
-        .file("src/kuzu_rs.cpp")
-        .flag_if_supported("-std=c++20")
-        .includes(include_paths)
-        .compile("kuzu_rs");
+    let mut build = cxx_build::bridge("src/ffi.rs");
+    build.file("src/kuzu_rs.cpp")
+        .includes(include_paths);
+	
+    if cfg!(windows) {
+        build.flag("/std:c++20");
+    } else {
+        build.flag_if_supported("-std=c++20");
+    }
+    build.compile("kuzu_rs");
 
     Ok(())
 }
