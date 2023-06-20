@@ -1,14 +1,18 @@
 #pragma once
 #include <memory>
 
-#include "main/kuzu.h"
 #include "rust/cxx.h"
+#ifdef KUZU_BUNDLED
+#include "main/kuzu.h"
 // Need to explicitly import some types.
 // The generated C++ wrapper code needs to be able to call sizeof on PreparedStatement,
 // which it can't do when it only sees forward declarations of its components.
 #include <binder/bound_statement.h>
 #include <main/prepared_statement.h>
 #include <planner/logical_plan/logical_plan.h>
+#else
+#include <kuzu.hpp>
+#endif
 
 namespace kuzu_rs {
 

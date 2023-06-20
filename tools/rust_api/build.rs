@@ -1,5 +1,5 @@
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn link_mode() -> &'static str {
     if env::var("KUZU_SHARED").is_ok() {
@@ -9,7 +9,7 @@ fn link_mode() -> &'static str {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn build_bundled() -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     // There is a kuzu-src symlink pointing to the root of the repo since Cargo
     // only looks at the files within the rust project when packaging crates.
     // Using a symlink the library can both be built in-source and from a crate.
@@ -28,7 +28,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rustc-link-search=native={}", kuzu_lib_path.display());
 
     let include_paths = vec![
-        Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("include"),
         kuzu_root.join("src/include"),
         kuzu_root.join("third_party/nlohmann_json"),
         kuzu_root.join("third_party/spdlog"),
@@ -94,15 +93,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("cargo:rustc-link-lib=static=antlr4_runtime");
         println!("cargo:rustc-link-lib=static=re2");
     }
+    Ok(include_paths)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (mut include_paths, bundled) = if let (Ok(kuzu_lib_dir), Ok(kuzu_include)) =
+        (env::var("KUZU_LIBRARY_DIR"), env::var("KUZU_INCLUDE_DIR"))
+    {
+        println!("cargo:rustc-link-search=native={}", kuzu_lib_dir);
+        if cfg!(windows) && link_mode() == "dylib" {
+            println!("cargo:rustc-link-lib=dylib=kuzu_shared");
+        } else {
+            println!("cargo:rustc-link-lib={}=kuzu", link_mode());
+        }
+        (vec![Path::new(&kuzu_include).to_path_buf()], false)
+    } else {
+        (build_bundled()?, true)
+    };
+
+    include_paths.push(Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("include"));
+
     println!("cargo:rerun-if-env-changed=KUZU_SHARED");
+    println!("cargo:rerun-if-env-changed=KUZU_LIBRARY_DIR");
+    println!("cargo:rerun-if-env-changed=KUZU_INCLUDE_DIR");
 
     println!("cargo:rerun-if-changed=include/kuzu_rs.h");
     println!("cargo:rerun-if-changed=include/kuzu_rs.cpp");
 
     let mut build = cxx_build::bridge("src/ffi.rs");
-    build.file("src/kuzu_rs.cpp")
+    build
+        .file("src/kuzu_rs.cpp")
         .includes(include_paths);
-	
+
+    if bundled {
+        build.define("KUZU_BUNDLED", None);
+    }
+
     if cfg!(windows) {
         build.flag("/std:c++20");
     } else {
