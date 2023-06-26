@@ -6,7 +6,7 @@
 //! # use anyhow::Error;
 //!
 //! # fn main() -> Result<(), Error> {
-//! # let temp_dir = tempdir::TempDir::new("example")?;
+//! # let temp_dir = tempfile::tempdir()?;
 //! # let path = temp_dir.path();
 //! let db = Database::new(path, 0)?;
 //! let conn = Connection::new(&db)?;

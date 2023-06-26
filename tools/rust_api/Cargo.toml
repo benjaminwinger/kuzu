@@ -26,6 +26,6 @@ num_cpus = "1.0"
 which = "4"
 
 [dev-dependencies]
-tempdir = "0.3"
+tempfile = "3"
 anyhow = "1"
 time = {version="0.3", features=["macros"]}
