@@ -35,6 +35,7 @@ time = "0.3"
 [build-dependencies]
 cxx-build = "1.0"
 num_cpus = "1.0"
+cmake = "0.1"
 [target.'cfg(windows)'.build-dependencies]
 which = "4"
 
