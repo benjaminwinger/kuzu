@@ -35,7 +35,7 @@ std::unique_ptr<kuzu::common::LogicalType> create_logical_type_var_list(
     std::unique_ptr<kuzu::common::LogicalType> childType);
 std::unique_ptr<kuzu::common::LogicalType> create_logical_type_fixed_list(
     std::unique_ptr<kuzu::common::LogicalType> childType, uint64_t numElements);
-std::unique_ptr<kuzu::common::LogicalType> create_logical_type_struct(
+std::unique_ptr<kuzu::common::LogicalType> create_logical_type_struct(kuzu::common::LogicalTypeID typeId,
     const rust::Vec<rust::String>& fieldNames, std::unique_ptr<TypeListBuilder> fieldTypes);
 
 const kuzu::common::LogicalType& logical_type_get_var_list_child_type(

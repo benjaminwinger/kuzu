@@ -222,6 +222,21 @@ pub enum Value {
     Struct(Vec<(String, Value)>),
     Node(NodeVal),
     Rel(RelVal),
+    RecursiveRel {
+        nodes: Vec<NodeVal>,
+        rels: Vec<RelVal>,
+    },
+}
+
+fn display_list<T: std::fmt::Display>(f: &mut fmt::Formatter<'_>, list: &Vec<T>) -> fmt::Result {
+    write!(f, "[")?;
+    for (i, value) in list.iter().enumerate() {
+        write!(f, "{}", value)?;
+        if i != list.len() - 1 {
+            write!(f, ",")?;
+        }
+    }
+    write!(f, "]")
 }
 
 impl std::fmt::Display for Value {
@@ -236,16 +251,7 @@ impl std::fmt::Display for Value {
             Value::String(x) => write!(f, "{x}"),
             Value::Blob(x) => write!(f, "{x:x?}"),
             Value::Null(_) => write!(f, ""),
-            Value::VarList(_, x) | Value::FixedList(_, x) => {
-                write!(f, "[")?;
-                for (i, value) in x.iter().enumerate() {
-                    write!(f, "{}", value)?;
-                    if i != x.len() - 1 {
-                        write!(f, ",")?;
-                    }
-                }
-                write!(f, "]")
-            }
+            Value::VarList(_, x) | Value::FixedList(_, x) => display_list(f, x),
             // Note: These don't match kuzu's toString, but we probably don't want them to
             Value::Interval(x) => write!(f, "{x}"),
             Value::Timestamp(x) => write!(f, "{x}"),
@@ -264,6 +270,14 @@ impl std::fmt::Display for Value {
             Value::Node(x) => write!(f, "{x}"),
             Value::Rel(x) => write!(f, "{x}"),
             Value::InternalID(x) => write!(f, "{x}"),
+            Value::RecursiveRel { nodes, rels } => {
+                write!(f, "{{")?;
+                write!(f, "_NODES: ")?;
+                display_list(f, nodes)?;
+                write!(f, ", _RELS: ")?;
+                display_list(f, rels)?;
+                write!(f, "}}")
+            }
         }
     }
 }
@@ -302,6 +316,7 @@ impl From<&Value> for LogicalType {
             Value::InternalID(_) => LogicalType::InternalID,
             Value::Node(_) => LogicalType::Node,
             Value::Rel(_) => LogicalType::Rel,
+            Value::RecursiveRel { .. } => LogicalType::RecursiveRel,
         }
     }
 }
@@ -432,8 +447,44 @@ impl TryFrom<&ffi::Value> for Value {
                     table_id: internal_id[1],
                 }))
             }
-            // Should be unreachable, as cxx will check that the LogicalTypeID enum matches the one
-            // on the C++ side.
+            LogicalTypeID::RECURSIVE_REL => {
+                // Data is a list containing a list of nodes and a list of rels
+                let list = ffi::value_get_list(value);
+                if list.size() != 2 {
+                    panic!("RecursiveRel should have two elements in its internal list!");
+                }
+                let value1 = list.get(0).as_ref().unwrap().try_into()?;
+                let value2 = list.get(1).as_ref().unwrap().try_into()?;
+                if let (
+                    Value::VarList(LogicalType::Struct { .. }, nodes),
+                    Value::VarList(LogicalType::Struct { .. }, rels),
+                ) = (value1, value2)
+                {
+                    let nodes = nodes.into_iter().map(|x| {
+                        if let Value::NodeVal(x) = x {
+                            x
+                        } else {
+                            unreachable!()
+                        }
+                    });
+                    let rels = rels.into_iter().map(|x| {
+                        if let Value::RelVal(x) = x {
+                            x
+                        } else {
+                            unreachable!()
+                        }
+                    });
+                    Ok(Value::RecursiveRel {
+                        nodes: nodes.collect(),
+                        rels: rels.collect(),
+                    })
+                } else {
+                    let value1: Value = list.get(0).as_ref().unwrap().try_into()?;
+                    let value2: Value = list.get(1).as_ref().unwrap().try_into()?;
+                    panic!("RecursiveRel had incorrect values: {}, {}", value1, value2);
+                }
+            }
+            // TODO: Better error message for types which are unsupported
             x => panic!("Unsupported type {:?}", x),
         }
     }
@@ -532,6 +583,41 @@ impl TryInto<cxx::UniquePtr<ffi::Value>> for Value {
             }
             Value::Node(_) => Err(crate::Error::ReadOnlyType(LogicalType::Node)),
             Value::Rel(_) => Err(crate::Error::ReadOnlyType(LogicalType::Rel)),
+            Value::RecursiveRel { nodes, rels } => {
+                let mut node_builder = ffi::create_list();
+                for elem in nodes {
+                    node_builder
+                        .pin_mut()
+                        .insert(Value::InternalID(elem).try_into()?);
+                }
+
+                let mut rel_builder = ffi::create_list();
+                for elem in rels {
+                    rel_builder
+                        .pin_mut()
+                        .insert(Value::InternalID(elem).try_into()?);
+                }
+
+                let mut builder = ffi::create_list();
+                builder.pin_mut().insert(ffi::get_list_value(
+                    (&LogicalType::VarList {
+                        child_type: Box::new(LogicalType::InternalID),
+                    })
+                        .into(),
+                    node_builder,
+                ));
+                builder.pin_mut().insert(ffi::get_list_value(
+                    (&LogicalType::VarList {
+                        child_type: Box::new(LogicalType::InternalID),
+                    })
+                        .into(),
+                    rel_builder,
+                ));
+                Ok(ffi::get_list_value(
+                    (&LogicalType::RecursiveRel).into(),
+                    builder,
+                ))
+            }
         }
     }
 }
@@ -695,6 +781,7 @@ mod tests {
         convert_node_type: LogicalType::Node,
         convert_internal_id_type: LogicalType::InternalID,
         convert_rel_type: LogicalType::Rel,
+        convert_recursive_rel_type: LogicalType::RecursiveRel,
     }
 
     value_tests! {
@@ -717,6 +804,7 @@ mod tests {
         }),
         convert_struct: Value::Struct(vec![("NAME".to_string(), "Alice".into()), ("AGE".to_string(), 25.into())]),
         convert_internal_id: Value::InternalID(InternalID { table_id: 0, offset: 0 }),
+        convert_recursive_rel: Value::RecursiveRel { nodes: vec![InternalID { table_id: 0, offset: 0 }], rels: vec![] },
     }
 
     display_tests! {
@@ -739,6 +827,7 @@ mod tests {
         display_struct: Value::Struct(vec![("NAME".to_string(), "Alice".into()), ("AGE".to_string(), 25.into())]),
         display_internal_id: Value::InternalID(InternalID { table_id: 0, offset: 0 }),
         // Node and Rel Cannot be easily created on the C++ side
+        display_recursive_rel: Value::RecursiveRel { nodes: vec![InternalID { table_id: 0, offset: 0 }], rels: vec![] },
     }
 
     database_tests! {
@@ -853,6 +942,68 @@ mod tests {
                     ("age".to_string(), Value::Int64(25))
                 ]
             })
+        );
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_recursive_rel() -> Result<()> {
+        let temp_dir = tempdir::TempDir::new("example")?;
+        let db = Database::new(temp_dir.path(), 0)?;
+        let conn = Connection::new(&db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT64, PRIMARY KEY(name));")?;
+        conn.query("CREATE REL TABLE knows(FROM Person TO Person);")?;
+        conn.query("CREATE (:Person {name: \"Alice\", age: 25});")?;
+        conn.query("CREATE (:Person {name: \"Bob\", age: 25});")?;
+        conn.query("CREATE (:Person {name: \"Eve\", age: 25});")?;
+        conn.query(
+            "MATCH (p1:Person), (p2:Person)
+                WHERE p1.name = \"Alice\" AND p2.name = \"Bob\"
+            CREATE (p1)-[:knows]->(p2);",
+        )?;
+        conn.query(
+            "MATCH (p1:Person), (p2:Person)
+                WHERE p1.name = \"Bob\" AND p2.name = \"Eve\"
+            CREATE (p1)-[:knows]->(p2);",
+        )?;
+        let result = conn
+            .query(
+                "MATCH (a:Person)-[e*2..2]->(b:Person)
+                 RETURN a.name, e, b.name;",
+            )?
+            .next()
+            .unwrap();
+        assert_eq!(result[0], Value::String("Alice".to_string()));
+        assert_eq!(result[2], Value::String("Eve".to_string()));
+        assert_eq!(
+            result[1],
+            Value::RecursiveRel {
+                nodes: vec![
+                    InternalID {
+                        offset: 0,
+                        table_id: 0
+                    },
+                    InternalID {
+                        offset: 1,
+                        table_id: 0
+                    },
+                    InternalID {
+                        offset: 2,
+                        table_id: 0
+                    }
+                ],
+                rels: vec![
+                    InternalID {
+                        offset: 0,
+                        table_id: 1
+                    },
+                    InternalID {
+                        offset: 1,
+                        table_id: 1
+                    }
+                ],
+            }
         );
         temp_dir.close()?;
         Ok(())

@@ -190,6 +190,7 @@ pub(crate) mod ffi {
             num_elements: u64,
         ) -> UniquePtr<LogicalType>;
         fn create_logical_type_struct(
+            type_id: LogicalTypeID,
             field_names: &Vec<String>,
             types: UniquePtr<TypeListBuilder>,
         ) -> UniquePtr<LogicalType>;
