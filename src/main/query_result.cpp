@@ -117,7 +117,7 @@ void QueryResult::initResultTableAndIterator(
     std::shared_ptr<processor::FactorizedTable> factorizedTable_,
     const binder::expression_vector& columns) {
     factorizedTable = std::move(factorizedTable_);
-    tuple = std::make_shared<FlatTuple>();
+    tuple = std::make_unique<FlatTuple>();
     std::vector<Value*> valuesToCollect;
     for (auto i = 0u; i < columns.size(); ++i) {
         auto column = columns[i].get();
@@ -130,7 +130,14 @@ void QueryResult::initResultTableAndIterator(
         valuesToCollect.push_back(value.get());
         tuple->addValue(std::move(value));
     }
-    iterator = std::make_unique<FlatTupleIterator>(*factorizedTable, std::move(valuesToCollect));
+}
+
+std::unique_ptr<FlatTupleIterator> QueryResult::begin() const {
+    return std::make_unique<FlatTupleIterator>(*factorizedTable, tuple);
+}
+
+std::unique_ptr<FlatTupleIterator> QueryResult::end() const {
+    return std::make_unique<FlatTupleIterator>(*factorizedTable, tuple, factorizedTable.getNumTuples());
 }
 
 bool QueryResult::hasNext() const {

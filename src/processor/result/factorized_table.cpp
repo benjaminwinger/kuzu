@@ -691,9 +691,9 @@ std::shared_ptr<FactorizedTable> FactorizedTableUtils::getFactorizedTableForOutp
     return factorizedTable;
 }
 
-FlatTupleIterator::FlatTupleIterator(FactorizedTable& factorizedTable, std::vector<Value*> values)
-    : factorizedTable{factorizedTable}, numFlatTuples{0}, nextFlatTupleIdx{0},
-      nextTupleIdx{1}, values{std::move(values)} {
+FlatTupleIterator::FlatTupleIterator(FactorizedTable& factorizedTable, FlatTuple tuple, ft_tuple_idx_t nextTupleIdx)
+    : factorizedTable{factorizedTable}, numFlatTuples{0}, nextFlatTupleIdx{0}, tuple(std::move(tuple))
+      nextTupleIdx{nextTupleIdx}, values{std::move(values)} {
     resetState();
     assert(this->values.size() == factorizedTable.tableSchema->getNumColumns());
 }

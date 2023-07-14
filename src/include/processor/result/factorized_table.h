@@ -341,17 +341,23 @@ public:
 class FlatTupleIterator {
 public:
     explicit FlatTupleIterator(
-        FactorizedTable& factorizedTable, std::vector<common::Value*> values);
+        FactorizedTable& factorizedTable, FlatTuple tuple, ft_tuple_idx_t nextTupleIdx = 1);
 
+    reference operator*() const { return *tuple; }
+    pointer operator->() const { return tuple; }
+
+    FlatTupleIterator& operator++() {
+        getNextFlatTuple();
+        return *this;
+    }
+
+private:
     inline bool hasNextFlatTuple() {
         return nextTupleIdx < factorizedTable.getNumTuples() || nextFlatTupleIdx < numFlatTuples;
     }
 
     void getNextFlatTuple();
 
-    void resetState();
-
-private:
     // The dataChunkPos may be not consecutive, which means some entries in the
     // flatTuplePositionsInDataChunk is invalid. We put pair(UINT64_MAX, UINT64_MAX) in the
     // invalid entries.
@@ -392,7 +398,7 @@ private:
     // This field stores the (nextIdxToReadInDataChunk, numElementsInDataChunk) of each dataChunk.
     std::vector<std::pair<uint64_t, uint64_t>> flatTuplePositionsInDataChunk;
 
-    std::vector<common::Value*> values;
+    std::shared_ptr<processor::FlatTuple> tuple;
 };
 
 } // namespace processor

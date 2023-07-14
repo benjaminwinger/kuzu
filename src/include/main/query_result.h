@@ -70,14 +70,9 @@ public:
     KUZU_API QuerySummary* getQuerySummary() const;
 
     std::vector<std::unique_ptr<DataTypeInfo>> getColumnTypesInfo();
-    /**
-     * @return whether there are more tuples to read.
-     */
-    KUZU_API bool hasNext() const;
-    /**
-     * @return next flat tuple in the query result.
-     */
-    KUZU_API std::shared_ptr<processor::FlatTuple> getNext();
+
+    std::unique_ptr<processor::FlatTupleIterator> begin() const;
+    std::unique_ptr<processor::FlatTupleIterator> end() const;
 
     std::string toString();
     /**
@@ -89,10 +84,6 @@ public:
      */
     KUZU_API void writeToCSV(const std::string& fileName, char delimiter = ',',
         char escapeCharacter = '"', char newline = '\n');
-    /**
-     * @brief Resets the result tuple iterator.
-     */
-    KUZU_API void resetIterator();
 
     processor::FactorizedTable* getTable() { return factorizedTable.get(); }
 
@@ -111,8 +102,8 @@ private:
     std::vector<common::LogicalType> columnDataTypes;
     // data
     std::shared_ptr<processor::FactorizedTable> factorizedTable;
-    std::unique_ptr<processor::FlatTupleIterator> iterator;
-    std::shared_ptr<processor::FlatTuple> tuple;
+    // Template tuple to initialize iterator with the correct column types
+    std::unique_ptr<FlatTuple> tuple;
 
     // execution statistics
     std::unique_ptr<QuerySummary> querySummary;
