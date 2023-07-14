@@ -1,7 +1,7 @@
 use crate::database::Database;
 use crate::error::Error;
 use crate::ffi::ffi;
-use crate::query_result::QueryResult;
+use crate::query_result::{FromKuzuRow, QueryResult};
 use crate::value::Value;
 use cxx::{let_cxx_string, UniquePtr};
 use std::cell::UnsafeCell;
@@ -193,7 +193,7 @@ impl<'a> Connection<'a> {
     // let result: QueryResult<kuzu::value::Int64> = conn.query("...")?;
     //
     // But this would really just be syntactic sugar wrapping the current system
-    pub fn query(&self, query: &str) -> Result<QueryResult, Error> {
+    pub fn query<T: FromKuzuRow>(&self, query: &str) -> Result<QueryResult<T>, Error> {
         let mut statement = self.prepare(query)?;
         self.execute(&mut statement, vec![])
     }
@@ -202,11 +202,11 @@ impl<'a> Connection<'a> {
     ///
     /// # Arguments
     /// * `prepared_statement`: The prepared statement to execute
-    pub fn execute(
+    pub fn execute<T: FromKuzuRow>(
         &self,
         prepared_statement: &mut PreparedStatement,
         params: Vec<(&str, Value)>,
-    ) -> Result<QueryResult, Error> {
+    ) -> Result<QueryResult<T>, Error> {
         // Passing and converting Values in a collection across the ffi boundary is difficult
         // (std::vector cannot be constructed from rust, Vec cannot contain opaque C++ types)
         // So we create an opaque parameter pack and copy the parameters into it one by one
@@ -223,7 +223,10 @@ impl<'a> Connection<'a> {
                 &result,
             )))
         } else {
-            Ok(QueryResult { result })
+            Ok(QueryResult {
+                result,
+                _t: std::marker::PhantomData,
+            })
         }
     }
 

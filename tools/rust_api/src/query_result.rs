@@ -2,12 +2,17 @@ use crate::ffi::ffi;
 use crate::logical_type::LogicalType;
 use crate::value::Value;
 use cxx::UniquePtr;
+use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::fmt;
 
+pub trait FromKuzuRow: TryFrom<Vec<Value>> {}
+pub trait FromKuzuResult<T: FromKuzuRow>: TryFrom<QueryResult<T>> {}
+
 /// Stores the result of a query execution
-pub struct QueryResult {
+pub struct QueryResult<T: FromKuzuRow> {
     pub(crate) result: UniquePtr<ffi::QueryResult>,
+    pub(crate) _t: std::marker::PhantomData<T>,
 }
 
 // Should be safe to move across threads, however access is not synchronized
@@ -54,7 +59,7 @@ impl CSVOptions {
     }
 }
 
-impl QueryResult {
+impl<T: FromKuzuRow> QueryResult<T> {
     /// Displays the query result as a string
     pub fn display(&mut self) -> String {
         ffi::query_result_to_string(self.result.pin_mut())
@@ -123,11 +128,9 @@ impl QueryResult {
 }
 
 // the underlying C++ type is both data and an iterator (sort-of)
-impl Iterator for QueryResult {
-    // we will be counting with usize
-    type Item = Vec<Value>;
+impl<T: FromKuzuRow> Iterator for QueryResult<T> {
+    type Item = T;
 
-    // next() is the only required method
     fn next(&mut self) -> Option<Self::Item> {
         if self.result.as_ref().unwrap().hasNext() {
             let flat_tuple = self.result.pin_mut().getNext();
@@ -141,14 +144,19 @@ impl Iterator for QueryResult {
                 // occur.
                 result.push(value.try_into().unwrap());
             }
-            Some(result)
+            TryInto::<T>::try_into(result).ok()
         } else {
             None
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.result.as_ref().unwrap().getNumTuples() as usize;
+        (len, Some(len))
+    }
 }
 
-impl fmt::Debug for QueryResult {
+impl<T: FromKuzuRow> fmt::Debug for QueryResult<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("QueryResult")
             .field(
