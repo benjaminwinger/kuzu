@@ -1,10 +1,11 @@
 use crate::database::Database;
 use crate::error::Error;
 use crate::ffi::ffi;
-use crate::query_result::QueryResult;
+use crate::query_result::{KuzuRow, QueryResult};
 use crate::value::Value;
 use cxx::UniquePtr;
 use std::cell::UnsafeCell;
+use std::convert::TryFrom;
 use std::convert::TryInto;
 
 /// A prepared stattement is a parameterized query which can avoid planning the same query for
@@ -132,7 +133,7 @@ impl<'a> Connection<'a> {
     // let result: QueryResult<kuzu::value::Int64> = conn.query("...")?;
     //
     // But this would really just be syntactic sugar wrapping the current system
-    pub fn query(&self, query: &str) -> Result<QueryResult<'a>, Error> {
+    pub fn query(&self, query: &str) -> Result<QueryResult<'a, Vec<Value>>, Error> {
         let conn = unsafe { (*self.conn.get()).pin_mut() };
         let result = ffi::connection_query(conn, ffi::StringView::new(query))?;
         if !result.isSuccess() {
@@ -140,7 +141,19 @@ impl<'a> Connection<'a> {
                 &result,
             )))
         } else {
-            Ok(QueryResult { result })
+            Ok(QueryResult::new(result))
+        }
+    }
+
+    pub fn query_value<T: TryFrom<KuzuRow>>(&self, query: &str) -> Result<QueryResult<T>, Error> {
+        let conn = unsafe { (*self.conn.get()).pin_mut() };
+        let result = ffi::connection_query(conn, ffi::StringView::new(query))?;
+        if !result.isSuccess() {
+            Err(Error::FailedQuery(ffi::query_result_get_error_message(
+                &result,
+            )))
+        } else {
+            Ok(QueryResult::new(result))
         }
     }
 
@@ -152,7 +165,7 @@ impl<'a> Connection<'a> {
         &self,
         prepared_statement: &mut PreparedStatement,
         params: Vec<(&str, Value)>,
-    ) -> Result<QueryResult, Error> {
+    ) -> Result<QueryResult<Vec<Value>>, Error> {
         // Passing and converting Values in a collection across the ffi boundary is difficult
         // (std::vector cannot be constructed from rust, Vec cannot contain opaque C++ types)
         // So we create an opaque parameter pack and copy the parameters into it one by one
@@ -169,7 +182,10 @@ impl<'a> Connection<'a> {
                 &result,
             )))
         } else {
-            Ok(QueryResult { result })
+            Ok(QueryResult {
+                result,
+                _t: std::marker::PhantomData,
+            })
         }
     }
 
@@ -252,6 +268,65 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
             assert_eq!(result.len(), 2);
             assert_eq!(result[0], Value::String("Alice".to_string()));
             assert_eq!(result[1], Value::Int16(25));
+        }
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_typed_query_result() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let db = Database::new(temp_dir.path(), SystemConfig::default())?;
+        let conn = Connection::new(&db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
+        conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
+
+        let result = conn.query_value::<(String, i16)>(
+            "MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;",
+        )?;
+        assert_eq!(result.get_num_tuples(), 1);
+
+        let mut results = 0;
+        for (name, age) in conn
+            .query_value::<(String, i16)>("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?
+        {
+            assert_eq!(name, "Alice");
+            assert_eq!(age, 25);
+            results += 1;
+        }
+        assert_eq!(results, 1);
+
+        // Implicit conversions also work
+        let mut results = 0;
+        for (name, age) in conn.query_value::<(String, String)>(
+            "MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;",
+        )? {
+            results += 1;
+            assert_eq!(name, "Alice");
+            assert_eq!(age, "25");
+        }
+        assert_eq!(results, 1);
+
+        temp_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_typed_query_result_error() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let db = Database::new(temp_dir.path(), SystemConfig::default())?;
+        let conn = Connection::new(&db)?;
+        conn.query("CREATE NODE TABLE Person(name STRING, age INT16, PRIMARY KEY(name));")?;
+        conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
+
+        let result =
+            conn.query_value::<(i8, i16)>("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?;
+        assert_eq!(result.get_num_tuples(), 1);
+        for (name, age) in
+            conn.query_value::<(i8, i16)>("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")?
+        {
+            assert_eq!(name, 1);
+            assert_eq!(age, 25);
         }
         temp_dir.close()?;
         Ok(())

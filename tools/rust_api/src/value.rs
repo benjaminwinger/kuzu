@@ -266,6 +266,121 @@ pub enum Value {
     Decimal(rust_decimal::Decimal),
 }
 
+macro_rules! try_from_value {
+    ( $var:ident, $typ:ty) => {
+        impl TryFrom<Value> for $typ {
+            type Error = crate::Error;
+            fn try_from(value: Value) -> Result<$typ, Self::Error> {
+                if let Value::$var(value) = value {
+                    Ok(value)
+                } else {
+                    let typ: LogicalType = (&value).into();
+                    let expected = stringify!($expr);
+                    Err(crate::Error::UnexpectedType(format!(
+                        "Expected type {expected}, but the value was actually a {typ:?}"
+                    )))
+                }
+            }
+        }
+    };
+}
+
+try_from_value!(Int8, i8);
+try_from_value!(Int16, i16);
+try_from_value!(Int32, i32);
+try_from_value!(Int64, i64);
+try_from_value!(UInt8, u8);
+try_from_value!(UInt16, u16);
+try_from_value!(UInt32, u32);
+try_from_value!(UInt64, u64);
+try_from_value!(Int128, i128);
+try_from_value!(Float, f32);
+try_from_value!(Double, f64);
+try_from_value!(Bool, bool);
+try_from_value!(UUID, uuid::Uuid);
+try_from_value!(Date, time::Date);
+try_from_value!(Interval, time::Duration);
+try_from_value!(InternalID, InternalID);
+try_from_value!(String, String);
+// Note that blob is skipped since it is indistinguishable from a List<u8>
+
+impl TryFrom<Value> for time::OffsetDateTime {
+    type Error = crate::Error;
+    fn try_from(value: Value) -> Result<time::OffsetDateTime, Self::Error> {
+        use Value::*;
+        match value {
+            Timestamp(time) | TimestampTz(time) | TimestampNs(time) | TimestampMs(time)
+            | TimestampSec(time) => Ok(time),
+            _ => {
+                let typ: LogicalType = (&value).into();
+                Err(crate::Error::UnexpectedType(format!(
+                    "Expected a Timestamp type, but the value was actually a {typ:?}"
+                )))
+            }
+        }
+    }
+}
+
+impl<T: TryFrom<Value>> TryFrom<Value> for Vec<T>
+where
+    <T as TryFrom<Value>>::Error: std::error::Error,
+    <T as TryFrom<Value>>::Error: 'static,
+{
+    type Error = Box<dyn std::error::Error>;
+    fn try_from(value: Value) -> Result<Vec<T>, Self::Error> {
+        match value {
+            Value::List(_, list) => {
+                let result: Result<Vec<T>, _> = list.into_iter().map(TryFrom::try_from).collect();
+                Ok(result.map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?)
+            }
+            _ => {
+                let typ: LogicalType = (&value).into();
+                Err(Box::new(crate::Error::UnexpectedType(format!(
+                    "Expected a List type, but the value was actually a {typ:?}"
+                ))))
+            }
+        }
+    }
+}
+
+impl<T: TryFrom<Value>, const N: usize> TryFrom<Value> for [T; N]
+where
+    T: std::fmt::Debug,
+    <T as TryFrom<Value>>::Error: std::error::Error,
+    <T as TryFrom<Value>>::Error: 'static,
+{
+    type Error = Box<dyn std::error::Error>;
+    fn try_from(value: Value) -> Result<[T; N], Self::Error> {
+        match value {
+            Value::Array(typ, list) => {
+                let result: Result<Vec<T>, _> = list.into_iter().map(TryFrom::try_from).collect();
+                let result: Vec<T> =
+                    result.map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
+                let LogicalType::Array {
+                    child_type: _,
+                    num_elements,
+                } = typ
+                else {
+                    unreachable!()
+                };
+                if num_elements as usize != result.len() {
+                    Err(Box::new(crate::Error::UnexpectedType(format!(
+                        "Expected an array of length {num_elements}, but the length was actually {}", result.len()
+                    ))))
+                } else {
+                    Ok(result.try_into().unwrap())
+                }
+            }
+            _ => {
+                let typ: LogicalType = (&value).into();
+                Err(Box::new(crate::Error::UnexpectedType(format!(
+                    "Expected a List type, but the value was actually a {typ:?}"
+                ))))
+            }
+        }
+    }
+}
+
 fn display_list<T: std::fmt::Display>(f: &mut fmt::Formatter<'_>, list: &[T]) -> fmt::Result {
     write!(f, "[")?;
     for (i, value) in list.iter().enumerate() {

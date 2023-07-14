@@ -12,6 +12,7 @@ pub enum Error {
     ReadOnlyType(LogicalType),
     #[cfg(feature = "arrow")]
     ArrowError(arrow::error::ArrowError),
+    UnexpectedType(String),
 }
 
 impl std::fmt::Display for Error {
@@ -24,6 +25,7 @@ impl std::fmt::Display for Error {
             ReadOnlyType(typ) => write!(f, "Attempted to pass read only type {:?} over ffi!", typ),
             #[cfg(feature = "arrow")]
             ArrowError(err) => write!(f, "{}", err),
+            UnexpectedType(err) => write!(f, "{}", err),
         }
     }
 }

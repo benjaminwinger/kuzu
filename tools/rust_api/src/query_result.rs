@@ -2,12 +2,148 @@ use crate::ffi::ffi;
 use crate::logical_type::LogicalType;
 use crate::value::Value;
 use cxx::UniquePtr;
+use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::fmt;
+use std::marker::PhantomData;
+
+pub struct KuzuRow(Vec<Value>);
+
+impl From<Vec<Value>> for KuzuRow {
+    fn from(row: Vec<Value>) -> Self {
+        KuzuRow(row)
+    }
+}
+
+impl From<KuzuRow> for Vec<Value> {
+    fn from(row: KuzuRow) -> Self {
+        row.0
+    }
+}
+
+impl<T: TryFrom<Value>> TryInto<(T,)> for KuzuRow {
+    type Error = T::Error;
+    fn try_into(self) -> Result<(T,), Self::Error> {
+        let KuzuRow(mut vector) = self;
+        if vector.len() == 1 {
+            Ok((vector.pop().unwrap().try_into()?,))
+        } else {
+            panic!("Row has multiple columns, but expected just one!");
+        }
+    }
+}
+
+impl<T1, T2> TryFrom<KuzuRow> for (T1, T2)
+where
+    T1: TryFrom<Value>,
+    T2: TryFrom<Value>,
+    <T1 as TryFrom<Value>>::Error: std::error::Error,
+    <T1 as TryFrom<Value>>::Error: 'static,
+    <T2 as TryFrom<Value>>::Error: std::error::Error,
+    <T2 as TryFrom<Value>>::Error: 'static,
+{
+    type Error = Box<dyn std::error::Error>;
+    fn try_from(row: KuzuRow) -> Result<(T1, T2), Self::Error> {
+        let KuzuRow(mut vector) = row;
+        if vector.len() == 2 {
+            let second = vector.pop().unwrap();
+            let first = vector.pop().unwrap();
+            Ok((
+                first
+                    .try_into()
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?,
+                second
+                    .try_into()
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?,
+            ))
+        } else {
+            panic!("Expected row to have two columns!");
+        }
+    }
+}
+
+impl<T1, T2, T3> TryFrom<KuzuRow> for (T1, T2, T3)
+where
+    T1: TryFrom<Value>,
+    T2: TryFrom<Value>,
+    T3: TryFrom<Value>,
+    <T1 as TryFrom<Value>>::Error: std::error::Error,
+    <T1 as TryFrom<Value>>::Error: 'static,
+    <T2 as TryFrom<Value>>::Error: std::error::Error,
+    <T2 as TryFrom<Value>>::Error: 'static,
+    <T3 as TryFrom<Value>>::Error: std::error::Error,
+    <T3 as TryFrom<Value>>::Error: 'static,
+{
+    type Error = Box<dyn std::error::Error>;
+    fn try_from(row: KuzuRow) -> Result<(T1, T2, T3), Self::Error> {
+        let KuzuRow(mut vector) = row;
+        if vector.len() == 2 {
+            let third = vector.pop().unwrap();
+            let second = vector.pop().unwrap();
+            let first = vector.pop().unwrap();
+            Ok((
+                first
+                    .try_into()
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?,
+                second
+                    .try_into()
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?,
+                third
+                    .try_into()
+                    .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?,
+            ))
+        } else {
+            panic!("Expected row to have two columns!");
+        }
+    }
+}
+
+/*
+impl<T: TryInto<Value>, E: T as TryInto<Value>>::Error: std::fmt::Debug> TryFrom<Vec<T>> for KuzuRow
+{ type Error = ;
+
+    fn try_from(value: Vec<T>) -> Result<Self, Self::Error> {
+        value
+            .into_iter()
+            .map(|x| x.try_into())
+            .collect::<Result<Vec<Value>, _>>()?
+    }
+}
+
+impl<T: TryFrom<Value>> TryFrom<KuzuRow> for Vec<T> {
+    type Error = &'static str;
+
+    fn try_from(value: KuzuRow) -> Result<Self, Self::Error> {
+        value
+            .map(|x| x.try_into::<Value>())
+            .collect::<Result<Vec<Value>>, _>()?
+    }
+}
+
+impl<T: TryInto<Value>> TryFrom<&[T]> for KuzuRow {
+    type Error = &'static str;
+
+    fn try_from(value: &[T]) -> Result<Self, Self::Error> {
+        value
+            .map(|x| x.try_into::<Value>())
+            .collect::<Result<Vec<Value>>, _>()?;
+    }
+}
+*/
 
 /// Stores the result of a query execution
-pub struct QueryResult<'a> {
+pub struct QueryResult<'a, T: TryFrom<KuzuRow> = Vec<Value>> {
     pub(crate) result: UniquePtr<ffi::QueryResult<'a>>,
+    pub(crate) _t: PhantomData<T>,
+}
+
+impl<T: TryFrom<KuzuRow>> QueryResult<'_, T> {
+    pub(crate) fn new(result: UniquePtr<ffi::QueryResult<'_>>) -> Self {
+        QueryResult {
+            result,
+            _t: PhantomData,
+        }
+    }
 }
 
 // Should be safe to move across threads, however access is not synchronized
@@ -54,7 +190,7 @@ impl CSVOptions {
     }
 }
 
-impl<'db> QueryResult<'db> {
+impl<'db, T: TryFrom<KuzuRow>> QueryResult<'db, T> {
     /// Displays the query result as a string
     pub fn display(&mut self) -> String {
         ffi::query_result_to_string(self.result.pin_mut())
@@ -120,26 +256,33 @@ impl<'db> QueryResult<'db> {
 }
 
 // the underlying C++ type is both data and an iterator (sort-of)
-impl Iterator for QueryResult<'_> {
-    type Item = Vec<Value>;
+impl<T: TryFrom<KuzuRow>> Iterator for QueryResult<'_, T> {
+    type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.result.as_ref().unwrap().hasNext() {
             let flat_tuple = self.result.pin_mut().getNext();
-            let mut result = vec![];
+            let mut result: Vec<Value> = vec![];
             for i in 0..flat_tuple.as_ref().unwrap().len() {
                 let value = ffi::flat_tuple_get_value(flat_tuple.as_ref().unwrap(), i);
                 // TODO: Return result instead of unwrapping?
                 // Unfortunately, as an iterator, this would require producing
                 // Vec<Result<Value>>, though it would be possible to turn that into
-                // Result<Vec<Value>> instead, but it would lose information when multiple failures
-                // occur.
+                // Result<Vec<Value>> instead, but it would lose information when multiple
+                // failures occur.
                 result.push(value.try_into().unwrap());
             }
-            Some(result)
+            // TODO: This is is ignoring conversion errors and terminating the iterator early if
+            // the TryFrom fails
+            TryInto::<T>::try_into(KuzuRow(result)).ok()
         } else {
             None
         }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.result.as_ref().unwrap().getNumTuples() as usize;
+        (len, Some(len))
     }
 }
 
@@ -163,8 +306,8 @@ impl Iterator for ArrowIterator<'_, '_> {
         if self.result.as_ref().unwrap().hasNext() {
             use crate::ffi::arrow::ffi_arrow;
             // Generally this panic should be unreachable, since the only exceptions produced by
-            // arrow_converter are for unsupported types, but those would produce an error when we
-            // create the schema.
+            // arrow_converter are for unsupported types, but those would produce an error when
+            // we create the schema.
             let array = ffi_arrow::query_result_get_next_arrow_chunk(
                 self.result.pin_mut(),
                 self.chunk_size as u64,
@@ -181,7 +324,7 @@ impl Iterator for ArrowIterator<'_, '_> {
     }
 }
 
-impl fmt::Debug for QueryResult<'_> {
+impl<T: TryFrom<KuzuRow>> fmt::Debug for QueryResult<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("QueryResult")
             .field(
