@@ -1,3 +1,20 @@
+use cxx::{type_id, ExternType};
+
+struct FFI_ArrowArray(arrow::ffi::FFI_ArrowArray);
+struct FFI_ArrowSchema(arrow::ffi::FFI_ArrowSchema);
+
+#[cfg(feature = "arrow")]
+unsafe impl ExternType for FFI_ArrowArray {
+    type Id = type_id!("arrow::ffi::ArrowArray");
+    type Kind = cxx::kind::Opaque;
+}
+
+#[cfg(feature = "arrow")]
+unsafe impl ExternType for FFI_ArrowSchema {
+    type Id = type_id!("arrow::ffi::ArrowSchema");
+    type Kind = cxx::kind::Opaque;
+}
+
 #[allow(clippy::module_inception)]
 #[cxx::bridge]
 pub(crate) mod ffi {
@@ -121,6 +138,16 @@ pub(crate) mod ffi {
         fn get_rel_property_names(conn: Pin<&mut Connection>, rel_table_name: &str) -> String;
     }
 
+    #[cfg(feature = "arrow")]
+    unsafe extern "C++" {
+        type ArrowArray = FFI_ArrowArray;
+    }
+
+    #[cfg(feature = "arrow")]
+    unsafe extern "C++" {
+        type ArrowSchema = FFI_ArrowSchema;
+    }
+
     #[namespace = "kuzu::main"]
     unsafe extern "C++" {
         type QueryResult;
@@ -132,6 +159,11 @@ pub(crate) mod ffi {
         fn query_result_get_error_message(query_result: &QueryResult) -> String;
         fn hasNext(&self) -> bool;
         fn getNext(self: Pin<&mut QueryResult>) -> SharedPtr<FlatTuple>;
+
+        #[cfg(feature = "arrow")]
+        fn getArrowSchema(self: &QueryResult) -> Result<UniquePtr<ArrowSchema>>;
+        #[cfg(feature = "arrow")]
+        fn asArrowArray(self: Pin<&mut QueryResult>) -> Result<UniquePtr<ArrowArray>>;
 
         #[namespace = "kuzu_rs"]
         fn query_result_get_compiling_time(result: &QueryResult) -> f64;

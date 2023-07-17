@@ -4,6 +4,7 @@
 #include "rust/cxx.h"
 #ifdef KUZU_BUNDLED
 #include "main/kuzu.h"
+#include "common/arrow/arrow.h"
 #else
 #include <kuzu.hpp>
 #endif

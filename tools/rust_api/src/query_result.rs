@@ -159,6 +159,17 @@ impl fmt::Debug for QueryResult {
     }
 }
 
+#[cfg(feature = "arrow")]
+impl TryInto<arrow::array::ArrayData> for QueryResult {
+    type Error = crate::error::Error;
+
+    fn try_into(self) -> Result<arrow::array::ArrayData, Self::Error> {
+        let array = self.result.pin_mut().asArrowArray()?;
+        let schema = self.result.as_ref().unwrap().getArrowSchema()?;
+        Ok(arrow::ffi::from_ffi(*array, schema.as_ref().unwrap())?)
+    }
+}
+
 /* TODO: QueryResult.toString() needs to be const
 impl std::fmt::Display for QueryResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

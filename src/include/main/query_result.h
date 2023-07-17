@@ -5,6 +5,7 @@
 #include "kuzu_fwd.h"
 #include "processor/result/flat_tuple.h"
 #include "query_summary.h"
+#include "common/arrow/arrow.h"
 
 namespace kuzu {
 namespace main {
@@ -69,7 +70,7 @@ public:
      */
     KUZU_API QuerySummary* getQuerySummary() const;
 
-    std::vector<std::unique_ptr<DataTypeInfo>> getColumnTypesInfo();
+    std::vector<std::unique_ptr<DataTypeInfo>> getColumnTypesInfo() const;
     /**
      * @return whether there are more tuples to read.
      */
@@ -95,6 +96,16 @@ public:
     KUZU_API void resetIterator();
 
     processor::FactorizedTable* getTable() { return factorizedTable.get(); }
+
+    /**
+     * @return datatypes of the columns as an arrow schema
+     */
+    std::unique_ptr<ArrowSchema> getArrowSchema() const;
+
+    /**
+     * @return An arrow array representation of the query result
+     */
+    std::unique_ptr<ArrowArray> asArrowArray();
 
 private:
     void initResultTableAndIterator(std::shared_ptr<processor::FactorizedTable> factorizedTable_,
