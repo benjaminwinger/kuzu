@@ -87,5 +87,14 @@ void NullMask::resize(uint64_t capacity) {
     numNullEntries = capacity;
 }
 
+bool NullMask::copyFromNullBits(const uint64_t* srcNullEntries, uint64_t srcOffset,
+    uint64_t dstOffset, uint64_t numBitsToCopy) {
+    if (copyNullMask(srcNullEntries, srcOffset, this->data, dstOffset, numBitsToCopy)) {
+        this->mayContainNulls = true;
+        return true;
+    }
+    return false;
+}
+
 } // namespace common
 } // namespace kuzu

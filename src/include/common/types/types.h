@@ -71,6 +71,7 @@ KUZU_API enum class LogicalTypeID : uint8_t {
     SERIAL = 13,
 
     // fixed size types
+    NULL_ = 21,
     BOOL = 22,
     INT64 = 23,
     INT32 = 24,
@@ -107,6 +108,7 @@ enum class PhysicalTypeID : uint8_t {
     INTERVAL = 7,
     INTERNAL_ID = 9,
     ARROW_COLUMN = 10,
+    NULL_ = 11,
 
     // Variable size types.
     STRING = 20,

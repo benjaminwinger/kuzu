@@ -96,7 +96,6 @@ public:
         mayContainNulls = true;
     }
 
-    inline void setMayContainNulls() { mayContainNulls = true; }
     inline bool hasNoNullsGuarantee() const { return !mayContainNulls; }
 
     void setNull(uint32_t pos, bool isNull);
@@ -108,17 +107,31 @@ public:
 
     inline bool isNull(uint32_t pos) const { return isNull(data, pos); }
 
-    inline uint64_t* getData() { return data; }
+    // const because updates to the data must set mayContainNulls if any value
+    // becomes non-null
+    // Modifying the underlying data shuld be done with setNull or copyFromNullData
+    inline const uint64_t* getData() { return data; }
 
     static inline uint64_t getNumNullEntries(uint64_t numNullBits) {
         return (numNullBits >> NUM_BITS_PER_NULL_ENTRY_LOG2) +
                ((numNullBits - (numNullBits << NUM_BITS_PER_NULL_ENTRY_LOG2)) == 0 ? 0 : 1);
     }
 
-    // This function returns true if we have copied a nullBit with value 1 (indicate a null
-    // value) to dstNullEntries.
+    // @brief Copies bitpacked null flags from one buffer to another
+    //
+    // @param srcNullEntries The bit data being copied
+    // @param srcOffset offset of the first source bit
+    // @param dstNullEntries The destination buffer of the copy
+    // @param dstOffset offset of the first destination bit
+    // @param numBitsToCopy The number of bits to copy from srcNullEntries to dstNullEntries
+    //
+    // @return true if we have copied a nullBit with value 1 (indicates a null value) to
+    //      dstNullEntries.
     static bool copyNullMask(const uint64_t* srcNullEntries, uint64_t srcOffset,
         uint64_t* dstNullEntries, uint64_t dstOffset, uint64_t numBitsToCopy);
+
+    bool copyFromNullBits(const uint64_t* srcNullEntries, uint64_t srcOffset, uint64_t dstOffset,
+        uint64_t numBitsToCopy);
 
     void resize(uint64_t capacity);
 

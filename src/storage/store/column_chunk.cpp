@@ -17,8 +17,19 @@ ColumnChunk::ColumnChunk(LogicalType dataType, CopyDescription* copyDescription,
 
 ColumnChunk::ColumnChunk(
     LogicalType dataType, offset_t numValues, CopyDescription* copyDescription, bool hasNullChunk)
-    : dataType{std::move(dataType)}, numBytesPerValue{getDataTypeSizeInChunk(this->dataType)},
-      numBytes{numBytesPerValue * numValues}, copyDescription{copyDescription} {
+    : dataType{std::move(dataType)}, numBitsPerValue{getDataTypeSizeInChunk(this->dataType)},
+      numBytesPerValue{numBitsPerValue / 8}, numBytes{numBitsPerValue * numValues / 8},
+      copyDescription{copyDescription} {
+    // TODO(bmwinger): Move logic into NullColumnChunk
+    // Maybe we need a BaseColumnChunk which doesn't initialize the buffer, so that each subclass
+    // can create a buffer that meets their requirements. Particularly when adding other compression
+    // types which will presumably also have different size quirks. But it might be worth making a
+    // more complex plan for that later.
+    // buffer size needs to be a multiple of 8 bytes so that NullMask can treat it as a 64-bit
+    // buffer.
+    if (this->dataType.getLogicalTypeID() == LogicalTypeID::NULL_) {
+        numBytes = std::ceil(numBytes / 8.0) * 8;
+    }
     buffer = std::make_unique<uint8_t[]>(numBytes);
     if (hasNullChunk) {
         nullChunk = std::make_unique<NullColumnChunk>();
@@ -227,18 +238,32 @@ uint32_t ColumnChunk::getDataTypeSizeInChunk(common::LogicalType& dataType) {
         return 0;
     }
     case LogicalTypeID::STRING: {
-        return sizeof(ku_string_t);
+        return sizeof(ku_string_t) * 8;
     }
     case LogicalTypeID::VAR_LIST: {
-        return sizeof(ku_list_t);
+        return sizeof(ku_list_t) * 8;
     }
     case LogicalTypeID::INTERNAL_ID: {
-        return sizeof(offset_t);
+        return sizeof(offset_t) * 8;
+    }
+    case LogicalTypeID::NULL_: {
+        return 1;
     }
     default: {
-        return StorageUtils::getDataTypeSize(dataType);
+        return StorageUtils::getDataTypeSize(dataType) * 8;
     }
     }
+}
+
+// TODO(bmwinger): Eventually, to support bitpacked bools, all these functions will need to be
+// updated to support values sizes of less than one byte.
+// But for the moment, this is the only generic ColumnChunk function which is needed by
+// NullColumnChunk, and it's invoked directly on the nullColumn, so we don't need dynamic dispatch
+void NullColumnChunk::appendColumnChunk(NullColumnChunk* other,
+    common::offset_t startPosInOtherChunk, common::offset_t startPosInChunk,
+    uint32_t numValuesToAppend) {
+    NullMask::copyNullMask((uint64_t*)other->buffer.get(), startPosInOtherChunk,
+        (uint64_t*)buffer.get(), startPosInChunk, numValuesToAppend);
 }
 
 void FixedListColumnChunk::appendColumnChunk(kuzu::storage::ColumnChunk* other,

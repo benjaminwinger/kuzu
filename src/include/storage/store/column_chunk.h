@@ -49,6 +49,7 @@ public:
     virtual common::page_idx_t flushBuffer(
         BMFileHandle* nodeGroupsDataFH, common::page_idx_t startPageIdx);
 
+    /// Returns the size of the data type in bits
     static uint32_t getDataTypeSizeInChunk(common::LogicalType& dataType);
 
     virtual void appendArray(
@@ -90,6 +91,7 @@ protected:
 
 protected:
     common::LogicalType dataType;
+    uint32_t numBitsPerValue;
     uint32_t numBytesPerValue;
     uint64_t numBytes;
     std::unique_ptr<uint8_t[]> buffer;
@@ -101,15 +103,26 @@ protected:
 class NullColumnChunk : public ColumnChunk {
 public:
     NullColumnChunk()
-        : ColumnChunk(common::LogicalType(common::LogicalTypeID::BOOL),
+        : ColumnChunk(common::LogicalType(common::LogicalTypeID::NULL_),
               nullptr /* copyDescription */, false /* hasNullChunk */) {
         resetNullBuffer();
     }
 
     inline void resetNullBuffer() { memset(buffer.get(), 0 /* non null */, numBytes); }
 
-    inline bool isNull(common::offset_t pos) const { return getValue<bool>(pos); }
-    inline void setNull(common::offset_t pos, bool isNull) { ((bool*)buffer.get())[pos] = isNull; }
+    inline bool isNull(common::offset_t pos) const {
+        // Buffer is rounded up to the nearest 8 bytes so that this cast is safe
+        return common::NullMask::isNull((uint64_t*)buffer.get(), pos);
+    }
+    inline void setNull(common::offset_t pos, bool isNull) {
+        using common::NullMask;
+        NullMask::copyNullMask(isNull ? &NullMask::ALL_NULL_ENTRY : &NullMask::NO_NULL_ENTRY, 0,
+            // Buffer is rounded up to the nearest 8 bytes so that this cast is safe
+            (uint64_t*)buffer.get(), pos, 1);
+    }
+
+    void appendColumnChunk(NullColumnChunk* other, common::offset_t startPosInOtherChunk,
+        common::offset_t startPosInChunk, uint32_t numValuesToAppend);
 };
 
 class FixedListColumnChunk : public ColumnChunk {

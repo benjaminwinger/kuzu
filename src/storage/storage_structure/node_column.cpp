@@ -43,15 +43,19 @@ void FixedSizedNodeColumnFunc::writeInternalIDValuesToPage(
 
 void NullNodeColumnFunc::readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
     ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead) {
-    for (auto i = 0u; i < numValuesToRead; i++) {
-        bool isNull = *(frame + pageCursor.elemPosInPage + i);
-        resultVector->setNull(posInVector + i, isNull);
-    }
+    // Read bit-packed null flags from the frame into the result vector
+    // Casting to uint64_t should be safe as long as the page size is a multiple of 8 bytes.
+    // Otherwise it could read off the end of the page.
+    resultVector->setNullFromBits(
+        (uint64_t*)frame, pageCursor.elemPosInPage, posInVector, numValuesToRead);
 }
 
 void NullNodeColumnFunc::writeValuesToPage(
     uint8_t* frame, uint16_t posInFrame, ValueVector* vector, uint32_t posInVector) {
-    *(frame + posInFrame) = vector->isNull(posInVector);
+    // Casting to uint64_t should be safe as long as the page size is a multiple of 8 bytes.
+    // Otherwise it could read off the end of the page.
+    // TODO: Is this efficient for copying only a single bit?
+    NullMask::copyNullMask(vector->getNullMaskData(), posInVector, (uint64_t*)frame, posInFrame, 1);
 }
 
 NodeColumn::NodeColumn(const Property& property, BMFileHandle* nodeGroupsDataFH,
@@ -67,7 +71,7 @@ NodeColumn::NodeColumn(LogicalType dataType, const MetaDiskArrayHeaderInfo& meta
     columnChunksMetaDA = std::make_unique<InMemDiskArray<ColumnChunkMetadata>>(*nodeGroupsMetaFH,
         StorageStructureID::newNodeGroupsMetaID(), metaDAHeaderInfo.mainHeaderPageIdx,
         bufferManager, wal);
-    numBytesPerFixedSizedValue = ColumnChunk::getDataTypeSizeInChunk(this->dataType);
+    numBytesPerFixedSizedValue = ColumnChunk::getDataTypeSizeInChunk(this->dataType) / 8;
     assert(numBytesPerFixedSizedValue <= BufferPoolConstants::PAGE_4KB_SIZE);
     numValuesPerPage =
         PageUtils::getNumElementsInAPage(numBytesPerFixedSizedValue, false /* hasNull */);
@@ -344,10 +348,15 @@ void NodeColumn::rollbackInMemory() {
 
 NullNodeColumn::NullNodeColumn(page_idx_t metaDAHeaderPageIdx, BMFileHandle* nodeGroupsDataFH,
     BMFileHandle* nodeGroupsMetaFH, BufferManager* bufferManager, WAL* wal)
-    : NodeColumn{LogicalType(LogicalTypeID::BOOL), MetaDiskArrayHeaderInfo{metaDAHeaderPageIdx},
+    : NodeColumn{LogicalType(LogicalTypeID::NULL_), MetaDiskArrayHeaderInfo{metaDAHeaderPageIdx},
           nodeGroupsDataFH, nodeGroupsMetaFH, bufferManager, wal, false /* requireNullColumn */} {
     readNodeColumnFunc = NullNodeColumnFunc::readValuesFromPage;
     writeNodeColumnFunc = NullNodeColumnFunc::writeValuesToPage;
+    // 8 values per byte
+    numValuesPerPage = PageUtils::getNumElementsInAPage(1, false) * 8;
+    // Page size must be aligned to 8 byte chunks for the 64-bit NullMask algorithms to work
+    // without the possibility of memory errors from reading/writing off the end of a page.
+    assert(PageUtils::getNumElementsInAPage(1, false) % 8 == 0);
 }
 
 void NullNodeColumn::scan(
@@ -371,7 +380,9 @@ page_idx_t NullNodeColumn::appendColumnChunk(
 void NullNodeColumn::setNull(common::offset_t nodeOffset) {
     auto walPageInfo = createWALVersionOfPageForValue(nodeOffset);
     try {
-        *(walPageInfo.frame + walPageInfo.posInPage) = true;
+        using common::NullMask;
+        NullMask::copyNullMask(
+            &NullMask::ALL_NULL_ENTRY, 0, (uint64_t*)walPageInfo.frame, walPageInfo.posInPage, 1);
     } catch (Exception& e) {
         bufferManager->unpin(*wal->fileHandle, walPageInfo.pageIdxInWAL);
         nodeGroupsDataFH->releaseWALPageIdxLock(walPageInfo.originalPageIdx);
