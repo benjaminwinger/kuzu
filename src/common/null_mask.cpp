@@ -5,14 +5,13 @@
 namespace kuzu {
 namespace common {
 
-void NullMask::setNull(uint32_t pos, bool isNull) {
+void NullMask::setNull(uint64_t* nullEntries, uint32_t pos, bool isNull) {
     auto entryPos = pos >> NUM_BITS_PER_NULL_ENTRY_LOG2;
     auto bitPosInEntry = pos - (entryPos << NUM_BITS_PER_NULL_ENTRY_LOG2);
     if (isNull) {
-        data[entryPos] |= NULL_BITMASKS_WITH_SINGLE_ONE[bitPosInEntry];
-        mayContainNulls = true;
+        nullEntries[entryPos] |= NULL_BITMASKS_WITH_SINGLE_ONE[bitPosInEntry];
     } else {
-        data[entryPos] &= NULL_BITMASKS_WITH_SINGLE_ZERO[bitPosInEntry];
+        nullEntries[entryPos] &= NULL_BITMASKS_WITH_SINGLE_ZERO[bitPosInEntry];
     }
 }
 
@@ -85,6 +84,15 @@ void NullMask::resize(uint64_t capacity) {
     buffer = std::move(resizedBuffer);
     data = buffer.get();
     numNullEntries = capacity;
+}
+
+bool NullMask::copyFromNullBits(const uint64_t* srcNullEntries, uint64_t srcOffset,
+    uint64_t dstOffset, uint64_t numBitsToCopy) {
+    if (copyNullMask(srcNullEntries, srcOffset, this->data, dstOffset, numBitsToCopy)) {
+        this->mayContainNulls = true;
+        return true;
+    }
+    return false;
 }
 
 } // namespace common

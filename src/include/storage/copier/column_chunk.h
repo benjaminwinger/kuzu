@@ -51,6 +51,7 @@ public:
 
     virtual common::page_idx_t flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx);
 
+    /// Returns the size of the data type in bytes
     static uint32_t getDataTypeSizeInChunk(common::LogicalType& dataType);
 
     template<typename T>
@@ -67,6 +68,9 @@ public:
 protected:
     ColumnChunk(common::LogicalType dataType, common::offset_t numValues,
         common::CopyDescription* copyDescription, bool hasNullChunk);
+
+    // Initializes the data buffer. Is (and should be) only called in constructor.
+    virtual void initialize(common::offset_t numValues);
 
     template<typename T>
     void templateCopyArrowArray(
@@ -100,15 +104,31 @@ protected:
 class NullColumnChunk : public ColumnChunk {
 public:
     NullColumnChunk()
-        : ColumnChunk(common::LogicalType(common::LogicalTypeID::BOOL),
-              nullptr /* copyDescription */, false /* hasNullChunk */) {
-        resetNullBuffer();
-    }
+        : ColumnChunk(common::LogicalType(common::LogicalTypeID::NULL_),
+              nullptr /* copyDescription */, false /* hasNullChunk */) {}
 
     inline void resetNullBuffer() { memset(buffer.get(), 0 /* non null */, numBytes); }
 
-    inline bool isNull(common::offset_t pos) const { return getValue<bool>(pos); }
-    inline void setNull(common::offset_t pos, bool isNull) { ((bool*)buffer.get())[pos] = isNull; }
+    inline bool isNull(common::offset_t pos) const {
+        // Buffer is rounded up to the nearest 8 bytes so that this cast is safe
+        return common::NullMask::isNull((uint64_t*)buffer.get(), pos);
+    }
+    inline void setNull(common::offset_t pos, bool isNull) {
+        common::NullMask::setNull(
+            // Buffer is rounded up to the nearest 8 bytes so that this cast is safe
+            (uint64_t*)buffer.get(), pos, isNull);
+    }
+
+    void append(NullColumnChunk* other, common::offset_t startPosInOtherChunk,
+        common::offset_t startPosInChunk, uint32_t numValuesToAppend);
+
+protected:
+    void initialize(common::offset_t numValues) final {
+        numBytesPerValue = 0;
+        // 8 values per byte, and we need a buffer size which is a multiple of 8 bytes
+        numBytes = ceil(numValues / 8 / 8.0) * 8;
+        buffer = std::make_unique<uint8_t[]>(numBytes);
+    }
 };
 
 class FixedListColumnChunk : public ColumnChunk {

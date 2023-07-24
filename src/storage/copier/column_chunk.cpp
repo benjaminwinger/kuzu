@@ -18,11 +18,16 @@ ColumnChunk::ColumnChunk(LogicalType dataType, CopyDescription* copyDescription,
 ColumnChunk::ColumnChunk(
     LogicalType dataType, offset_t numValues, CopyDescription* copyDescription, bool hasNullChunk)
     : dataType{std::move(dataType)}, numBytesPerValue{getDataTypeSizeInChunk(this->dataType)},
-      numBytes{numBytesPerValue * numValues}, copyDescription{copyDescription} {
-    buffer = std::make_unique<uint8_t[]>(numBytes);
+      copyDescription{copyDescription} {
+    initialize(numValues);
     if (hasNullChunk) {
         nullChunk = std::make_unique<NullColumnChunk>();
     }
+}
+
+void ColumnChunk::initialize(offset_t numValues) {
+    numBytes = numBytesPerValue * numValues;
+    buffer = std::make_unique<uint8_t[]>(numBytes);
 }
 
 void ColumnChunk::resetToEmpty() {
@@ -232,10 +237,28 @@ uint32_t ColumnChunk::getDataTypeSizeInChunk(common::LogicalType& dataType) {
     case LogicalTypeID::INTERNAL_ID: {
         return sizeof(offset_t);
     }
+    // This should never be used for Nulls,
+    // which use a different way of calculating the buffer size
+    // FIXME(bmwinger): Setting this to 0 breaks everything.
+    // It's being used in NullNodeColumn, and maybe there are some functions
+    // relying on it despite the value being meaningless for a null bitfield.
+    case LogicalTypeID::NULL_: {
+        return 1;
+    }
     default: {
         return StorageUtils::getDataTypeSize(dataType);
     }
     }
+}
+
+// TODO(bmwinger): Eventually, to support bitpacked bools, all these functions will need to be
+// updated to support values sizes of less than one byte.
+// But for the moment, this is the only generic ColumnChunk function which is needed by
+// NullColumnChunk, and it's invoked directly on the nullColumn, so we don't need dynamic dispatch
+void NullColumnChunk::append(NullColumnChunk* other, common::offset_t startPosInOtherChunk,
+    common::offset_t startPosInChunk, uint32_t numValuesToAppend) {
+    NullMask::copyNullMask((uint64_t*)other->buffer.get(), startPosInOtherChunk,
+        (uint64_t*)buffer.get(), startPosInChunk, numValuesToAppend);
 }
 
 void FixedListColumnChunk::append(ColumnChunk* other, common::offset_t startPosInOtherChunk,
