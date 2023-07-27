@@ -148,13 +148,17 @@ void ColumnChunk::templateCopyArrowArray<bool>(
 
     auto arrowBuffer = boolArray->values()->data();
     // FIXME: Double-check that these offsets are correct
-    // Might read off the end with the case, but copyNullMask should ignore the extra data
+    // Might read off the end with the cast, but copyNullMask should ignore the extra data
+    //
+    // The arrow BooleanArray offset should be the offset in bits
+    // Unfortunately this is not documented.
     NullMask::copyNullMask((uint64_t*)arrowBuffer, boolArray->offset(), (uint64_t*)buffer.get(),
         startPosInChunk, numValuesToAppend);
 
     if (data->MayHaveNulls()) {
         auto arrowNullBitMap = boolArray->null_bitmap_data();
 
+        // Offset should apply to both bool data and nulls
         NullMask::copyNullMask((uint64_t*)arrowNullBitMap, boolArray->offset(),
             (uint64_t*)nullChunk->buffer.get(), startPosInChunk, numValuesToAppend);
     }
