@@ -119,8 +119,8 @@ void StructColumnChunk::setValueToStructField(
             structFieldValue.c_str(), structFieldValue.length(), pos);
     } break;
     case LogicalTypeID::BOOL: {
-        fieldChunk->setValueFromString<bool>(
-            structFieldValue.c_str(), structFieldValue.length(), pos);
+        static_cast<BoolColumnChunk*>(fieldChunk)
+            ->setValueFromString(structFieldValue.c_str(), structFieldValue.length(), pos);
     } break;
     case LogicalTypeID::DATE: {
         fieldChunk->setValueFromString<date_t>(
@@ -135,17 +135,17 @@ void StructColumnChunk::setValueToStructField(
             structFieldValue.c_str(), structFieldValue.length(), pos);
     } break;
     case LogicalTypeID::STRING: {
-        reinterpret_cast<VarSizedColumnChunk*>(fieldChunk)
+        static_cast<VarSizedColumnChunk*>(fieldChunk)
             ->setValueFromString<ku_string_t>(
                 structFieldValue.c_str(), structFieldValue.length(), pos);
     } break;
     case LogicalTypeID::VAR_LIST: {
-        reinterpret_cast<VarSizedColumnChunk*>(fieldChunk)
+        static_cast<VarSizedColumnChunk*>(fieldChunk)
             ->setValueFromString<ku_list_t>(
                 structFieldValue.c_str(), structFieldValue.length(), pos);
     } break;
     case LogicalTypeID::STRUCT: {
-        reinterpret_cast<StructColumnChunk*>(fieldChunk)
+        static_cast<StructColumnChunk*>(fieldChunk)
             ->setStructFields(structFieldValue.c_str(), structFieldValue.length(), pos);
     } break;
     default: {

@@ -100,29 +100,40 @@ protected:
     const common::CopyDescription* copyDescription;
 };
 
-class NullColumnChunk : public ColumnChunk {
+class BoolColumnChunk : public ColumnChunk {
 public:
-    NullColumnChunk()
-        : ColumnChunk(common::LogicalType(common::LogicalTypeID::NULL_),
-              nullptr /* copyDescription */, false /* hasNullChunk */) {
-        resetNullBuffer();
-    }
+    BoolColumnChunk(common::CopyDescription* copyDescription, bool hasNullChunk = true)
+        : ColumnChunk(
+              common::LogicalType(common::LogicalTypeID::BOOL), copyDescription, hasNullChunk) {}
 
-    inline void resetNullBuffer() { memset(buffer.get(), 0 /* non null */, numBytes); }
+    inline void resetBuffer() { memset(buffer.get(), 0 /* non null */, numBytes); }
 
-    inline bool isNull(common::offset_t pos) const {
-        // Buffer is rounded up to the nearest 8 bytes so that this cast is safe
-        return common::NullMask::isNull((uint64_t*)buffer.get(), pos);
-    }
-    inline void setNull(common::offset_t pos, bool isNull) {
+    void appendColumnChunk(ColumnChunk* other, common::offset_t startPosInOtherChunk,
+        common::offset_t startPosInChunk, uint32_t numValuesToAppend) final;
+
+    inline void setValue(bool val, common::offset_t pos) {
         using common::NullMask;
-        NullMask::copyNullMask(isNull ? &NullMask::ALL_NULL_ENTRY : &NullMask::NO_NULL_ENTRY, 0,
+        NullMask::copyNullMask(val ? &NullMask::ALL_NULL_ENTRY : &NullMask::NO_NULL_ENTRY, 0,
             // Buffer is rounded up to the nearest 8 bytes so that this cast is safe
             (uint64_t*)buffer.get(), pos, 1);
     }
 
-    void appendColumnChunk(NullColumnChunk* other, common::offset_t startPosInOtherChunk,
-        common::offset_t startPosInChunk, uint32_t numValuesToAppend);
+    inline bool getValue(common::offset_t pos) const {
+        return common::NullMask::isNull((uint64_t*)buffer.get(), pos);
+    }
+
+    void setValueFromString(const char* value, uint64_t length, common::offset_t pos);
+};
+
+class NullColumnChunk : public BoolColumnChunk {
+public:
+    NullColumnChunk() : BoolColumnChunk(nullptr /*copyDescription*/, false /*hasNullChunk*/) {}
+    // Maybe this should be combined with BoolColumnChunk if the only difference is these functions?
+    inline bool isNull(common::offset_t pos) const {
+        // Buffer is rounded up to the nearest 8 bytes so that this cast is safe
+        return getValue(pos);
+    }
+    inline void setNull(common::offset_t pos, bool isNull) { setValue(isNull, pos); }
 };
 
 class FixedListColumnChunk : public ColumnChunk {
@@ -145,10 +156,6 @@ void ColumnChunk::templateCopyArrowArray<bool>(
 template<>
 void ColumnChunk::templateCopyArrowArray<uint8_t*>(
     arrow::Array* array, common::offset_t startPosInSegment, uint32_t numValuesToAppend);
-// BOOL
-template<>
-void ColumnChunk::setValueFromString<bool>(
-    const char* value, uint64_t length, common::offset_t pos);
 // FIXED_LIST
 template<>
 void ColumnChunk::setValueFromString<uint8_t*>(const char* value, uint64_t length, uint64_t pos);

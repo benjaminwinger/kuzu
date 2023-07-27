@@ -27,7 +27,7 @@ ColumnChunk::ColumnChunk(
     // more complex plan for that later.
     // buffer size needs to be a multiple of 8 bytes so that NullMask can treat it as a 64-bit
     // buffer.
-    if (this->dataType.getLogicalTypeID() == LogicalTypeID::NULL_) {
+    if (this->dataType.getLogicalTypeID() == LogicalTypeID::BOOL) {
         numBytes = std::ceil(numBytes / 8.0) * 8;
     }
     buffer = std::make_unique<uint8_t[]>(numBytes);
@@ -38,7 +38,7 @@ ColumnChunk::ColumnChunk(
 
 void ColumnChunk::resetToEmpty() {
     if (nullChunk) {
-        nullChunk->resetNullBuffer();
+        nullChunk->resetBuffer();
     }
 }
 
@@ -145,21 +145,18 @@ void ColumnChunk::templateCopyArrowArray<bool>(
     arrow::Array* array, offset_t startPosInChunk, uint32_t numValuesToAppend) {
     auto* boolArray = (arrow::BooleanArray*)array;
     auto data = boolArray->data();
-    auto valuesInChunk = (bool*)(buffer.get());
+
+    auto arrowBuffer = boolArray->values()->data();
+    assert(boolArray->length() % 8 == 0);
+    // FIXME: Double-check that these offsets are correct
+    NullMask::copyNullMask((uint64_t*)arrowBuffer, boolArray->offset(), (uint64_t*)buffer.get(),
+        startPosInChunk, numValuesToAppend);
+
     if (data->MayHaveNulls()) {
-        for (auto i = 0u; i < numValuesToAppend; i++) {
-            auto posInChunk = startPosInChunk + i;
-            if (data->IsNull(i)) {
-                nullChunk->setNull(posInChunk, true);
-                continue;
-            }
-            valuesInChunk[posInChunk] = boolArray->Value(i);
-        }
-    } else {
-        for (auto i = 0u; i < numValuesToAppend; i++) {
-            auto posInChunk = startPosInChunk + i;
-            valuesInChunk[posInChunk] = boolArray->Value(i);
-        }
+        auto arrowNullBitMap = boolArray->null_bitmap_data();
+
+        NullMask::copyNullMask((uint64_t*)arrowNullBitMap, boolArray->offset(),
+            (uint64_t*)nullChunk->buffer.get(), startPosInChunk, numValuesToAppend);
     }
 }
 
@@ -246,7 +243,7 @@ uint32_t ColumnChunk::getDataTypeSizeInChunk(common::LogicalType& dataType) {
     case LogicalTypeID::INTERNAL_ID: {
         return sizeof(offset_t) * 8;
     }
-    case LogicalTypeID::NULL_: {
+    case LogicalTypeID::BOOL: {
         return 1;
     }
     default: {
@@ -259,11 +256,23 @@ uint32_t ColumnChunk::getDataTypeSizeInChunk(common::LogicalType& dataType) {
 // updated to support values sizes of less than one byte.
 // But for the moment, this is the only generic ColumnChunk function which is needed by
 // NullColumnChunk, and it's invoked directly on the nullColumn, so we don't need dynamic dispatch
-void NullColumnChunk::appendColumnChunk(NullColumnChunk* other,
-    common::offset_t startPosInOtherChunk, common::offset_t startPosInChunk,
-    uint32_t numValuesToAppend) {
-    NullMask::copyNullMask((uint64_t*)other->buffer.get(), startPosInOtherChunk,
+void BoolColumnChunk::appendColumnChunk(ColumnChunk* other, common::offset_t startPosInOtherChunk,
+    common::offset_t startPosInChunk, uint32_t numValuesToAppend) {
+    auto otherChunk = static_cast<BoolColumnChunk*>(other);
+    NullMask::copyNullMask((uint64_t*)otherChunk->buffer.get(), startPosInOtherChunk,
         (uint64_t*)buffer.get(), startPosInChunk, numValuesToAppend);
+
+    if (nullChunk) {
+        nullChunk->appendColumnChunk(
+            otherChunk->nullChunk.get(), startPosInOtherChunk, startPosInChunk, numValuesToAppend);
+    }
+}
+
+void BoolColumnChunk::setValueFromString(const char* value, uint64_t length, common::offset_t pos) {
+    std::istringstream boolStream{std::string(value)};
+    bool booleanVal;
+    boolStream >> std::boolalpha >> booleanVal;
+    setValue(booleanVal, pos);
 }
 
 void FixedListColumnChunk::appendColumnChunk(kuzu::storage::ColumnChunk* other,
@@ -285,7 +294,9 @@ void FixedListColumnChunk::appendColumnChunk(kuzu::storage::ColumnChunk* other,
 std::unique_ptr<ColumnChunk> ColumnChunkFactory::createColumnChunk(
     const LogicalType& dataType, CopyDescription* copyDescription) {
     switch (dataType.getLogicalTypeID()) {
-    case LogicalTypeID::BOOL:
+    case LogicalTypeID::BOOL: {
+        return std::make_unique<BoolColumnChunk>(copyDescription);
+    }
     case LogicalTypeID::INT64:
     case LogicalTypeID::INT32:
     case LogicalTypeID::INT16:
@@ -313,15 +324,6 @@ std::unique_ptr<ColumnChunk> ColumnChunkFactory::createColumnChunk(
                                       " is not supported.");
     }
     }
-}
-
-// Bool
-template<>
-void ColumnChunk::setValueFromString<bool>(const char* value, uint64_t length, uint64_t pos) {
-    std::istringstream boolStream{std::string(value)};
-    bool booleanVal;
-    boolStream >> std::boolalpha >> booleanVal;
-    setValue(booleanVal, pos);
 }
 
 // Fixed list
