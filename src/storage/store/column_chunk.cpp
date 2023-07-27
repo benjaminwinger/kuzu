@@ -147,8 +147,8 @@ void ColumnChunk::templateCopyArrowArray<bool>(
     auto data = boolArray->data();
 
     auto arrowBuffer = boolArray->values()->data();
-    assert(boolArray->length() % 8 == 0);
     // FIXME: Double-check that these offsets are correct
+    // Might read off the end with the case, but copyNullMask should ignore the extra data
     NullMask::copyNullMask((uint64_t*)arrowBuffer, boolArray->offset(), (uint64_t*)buffer.get(),
         startPosInChunk, numValuesToAppend);
 

@@ -66,7 +66,7 @@ public:
 
     virtual void write(common::ValueVector* nodeIDVector, common::ValueVector* vectorToWriteFrom);
 
-    virtual void setNull(common::offset_t nodeOffset);
+    void setNull(common::offset_t nodeOffset);
 
     inline uint32_t getNumBytesPerValue() const { return numBytesPerFixedSizedValue; }
     inline uint64_t getNumNodeGroups(transaction::Transaction* transaction) const {
@@ -116,24 +116,31 @@ protected:
     BufferManager* bufferManager;
     WAL* wal;
     std::unique_ptr<InMemDiskArray<ColumnChunkMetadata>> columnChunksMetaDA;
-    std::unique_ptr<NodeColumn> nullColumn;
+    std::unique_ptr<NullNodeColumn> nullColumn;
     std::vector<std::unique_ptr<NodeColumn>> childrenColumns;
     read_node_column_func_t readNodeColumnFunc;
     write_node_column_func_t writeNodeColumnFunc;
 };
 
-class NullNodeColumn : public NodeColumn {
+class BoolNodeColumn : public NodeColumn {
+public:
+    BoolNodeColumn(const catalog::MetaDiskArrayHeaderInfo& metaDAHeaderInfo,
+        BMFileHandle* nodeGroupsDataFH, BMFileHandle* nodeGroupsMetaFH,
+        BufferManager* bufferManager, WAL* wal, bool requireNullColumn = true);
+
+    common::page_idx_t appendColumnChunk(
+        ColumnChunk* columnChunk, common::page_idx_t startPageIdx, uint64_t nodeGroupIdx) final;
+};
+
+class NullNodeColumn : public BoolNodeColumn {
 public:
     NullNodeColumn(common::page_idx_t metaDAHeaderPageIdx, BMFileHandle* nodeGroupsDataFH,
         BMFileHandle* nodeGroupsMetaFH, BufferManager* bufferManager, WAL* wal);
-
+    void setNull(common::offset_t nodeOffset);
     void scan(transaction::Transaction* transaction, common::ValueVector* nodeIDVector,
         common::ValueVector* resultVector) final;
     void lookup(transaction::Transaction* transaction, common::ValueVector* nodeIDVector,
         common::ValueVector* resultVector) final;
-    common::page_idx_t appendColumnChunk(
-        ColumnChunk* columnChunk, common::page_idx_t startPageIdx, uint64_t nodeGroupIdx) final;
-    void setNull(common::offset_t nodeOffset) final;
 
 protected:
     void writeInternal(common::offset_t nodeOffset, common::ValueVector* vectorToWriteFrom,

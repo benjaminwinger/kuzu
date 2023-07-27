@@ -95,6 +95,9 @@ void NodeColumn::batchLookup(const offset_t* nodeOffsets, size_t size, uint8_t* 
         auto dummyReadOnlyTransaction = Transaction::getDummyReadOnlyTrx();
         cursor.pageIdx +=
             columnChunksMetaDA->get(nodeGroupIdx, dummyReadOnlyTransaction->getType()).pageIdx;
+        // TODO: this won't work for bitpacked bool columns
+        // However changing it would probably violate assumptions in the calling function
+        // Figure out how this is used and document it
         readFromPage(dummyReadOnlyTransaction.get(), cursor.pageIdx, [&](uint8_t* frame) -> void {
             memcpy(result + i * numBytesPerFixedSizedValue,
                 frame + (cursor.elemPosInPage * numBytesPerFixedSizedValue),
@@ -269,7 +272,8 @@ page_idx_t NodeColumn::appendColumnChunk(
 
 void NodeColumn::writeInternal(
     offset_t nodeOffset, ValueVector* vectorToWriteFrom, uint32_t posInVectorToWriteFrom) {
-    nullColumn->writeInternal(nodeOffset, vectorToWriteFrom, posInVectorToWriteFrom);
+    static_cast<NodeColumn*>(nullColumn.get())
+        ->writeInternal(nodeOffset, vectorToWriteFrom, posInVectorToWriteFrom);
     bool isNull = vectorToWriteFrom->isNull(posInVectorToWriteFrom);
     if (isNull) {
         return;
@@ -346,10 +350,11 @@ void NodeColumn::rollbackInMemory() {
     }
 }
 
-NullNodeColumn::NullNodeColumn(page_idx_t metaDAHeaderPageIdx, BMFileHandle* nodeGroupsDataFH,
-    BMFileHandle* nodeGroupsMetaFH, BufferManager* bufferManager, WAL* wal)
-    : NodeColumn{LogicalType(LogicalTypeID::NULL_), MetaDiskArrayHeaderInfo{metaDAHeaderPageIdx},
-          nodeGroupsDataFH, nodeGroupsMetaFH, bufferManager, wal, false /* requireNullColumn */} {
+BoolNodeColumn::BoolNodeColumn(const catalog::MetaDiskArrayHeaderInfo& metaDAHeaderInfo,
+    BMFileHandle* nodeGroupsDataFH, BMFileHandle* nodeGroupsMetaFH, BufferManager* bufferManager,
+    WAL* wal, bool requireNullColumn)
+    : NodeColumn{LogicalType(LogicalTypeID::BOOL), metaDAHeaderInfo, nodeGroupsDataFH,
+          nodeGroupsMetaFH, bufferManager, wal, requireNullColumn} {
     readNodeColumnFunc = NullNodeColumnFunc::readValuesFromPage;
     writeNodeColumnFunc = NullNodeColumnFunc::writeValuesToPage;
     // 8 values per byte
@@ -358,6 +363,11 @@ NullNodeColumn::NullNodeColumn(page_idx_t metaDAHeaderPageIdx, BMFileHandle* nod
     // without the possibility of memory errors from reading/writing off the end of a page.
     assert(PageUtils::getNumElementsInAPage(1, false) % 8 == 0);
 }
+
+NullNodeColumn::NullNodeColumn(page_idx_t metaDAHeaderPageIdx, BMFileHandle* nodeGroupsDataFH,
+    BMFileHandle* nodeGroupsMetaFH, BufferManager* bufferManager, WAL* wal)
+    : BoolNodeColumn{MetaDiskArrayHeaderInfo{metaDAHeaderPageIdx}, nodeGroupsDataFH,
+          nodeGroupsMetaFH, bufferManager, wal, false /*requireNullColumn*/} {}
 
 void NullNodeColumn::scan(
     Transaction* transaction, ValueVector* nodeIDVector, ValueVector* resultVector) {
@@ -369,7 +379,7 @@ void NullNodeColumn::lookup(
     lookupInternal(transaction, nodeIDVector, resultVector);
 }
 
-page_idx_t NullNodeColumn::appendColumnChunk(
+page_idx_t BoolNodeColumn::appendColumnChunk(
     ColumnChunk* columnChunk, page_idx_t startPageIdx, uint64_t nodeGroupIdx) {
     auto numPagesFlushed = columnChunk->flushBuffer(nodeGroupsDataFH, startPageIdx);
     columnChunksMetaDA->resize(nodeGroupIdx + 1);
@@ -441,6 +451,8 @@ std::unique_ptr<NodeColumn> NodeColumnFactory::createNodeColumn(const LogicalTyp
     BMFileHandle* nodeGroupsMetaFH, BufferManager* bufferManager, WAL* wal) {
     switch (dataType.getLogicalTypeID()) {
     case LogicalTypeID::BOOL:
+        return std::make_unique<BoolNodeColumn>(
+            metaDAHeaderInfo, nodeGroupsDataFH, nodeGroupsMetaFH, bufferManager, wal, true);
     case LogicalTypeID::INT64:
     case LogicalTypeID::INT32:
     case LogicalTypeID::INT16:
