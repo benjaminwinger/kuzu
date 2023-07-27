@@ -18,8 +18,7 @@ ColumnChunk::ColumnChunk(LogicalType dataType, CopyDescription* copyDescription,
 ColumnChunk::ColumnChunk(
     LogicalType dataType, offset_t numValues, CopyDescription* copyDescription, bool hasNullChunk)
     : dataType{std::move(dataType)}, numBitsPerValue{getDataTypeSizeInChunk(this->dataType)},
-      numBytesPerValue{numBitsPerValue / 8}, numBytes{numBitsPerValue * numValues / 8},
-      copyDescription{copyDescription} {
+      numBytes{numBitsPerValue * numValues / 8}, copyDescription{copyDescription} {
     // TODO(bmwinger): Move logic into NullColumnChunk
     // Maybe we need a BaseColumnChunk which doesn't initialize the buffer, so that each subclass
     // can create a buffer that meets their requirements. Particularly when adding other compression
@@ -27,7 +26,7 @@ ColumnChunk::ColumnChunk(
     // more complex plan for that later.
     // buffer size needs to be a multiple of 8 bytes so that NullMask can treat it as a 64-bit
     // buffer.
-    if (this->dataType.getLogicalTypeID() == LogicalTypeID::NULL_) {
+    if (this->dataType.getLogicalTypeID() == LogicalTypeID::BOOL) {
         numBytes = std::ceil(numBytes / 8.0) * 8;
     }
     buffer = std::make_unique<uint8_t[]>(numBytes);
@@ -38,7 +37,7 @@ ColumnChunk::ColumnChunk(
 
 void ColumnChunk::resetToEmpty() {
     if (nullChunk) {
-        nullChunk->resetNullBuffer();
+        nullChunk->resetBuffer();
     }
 }
 
@@ -55,9 +54,9 @@ void ColumnChunk::appendColumnChunk(ColumnChunk* other, offset_t startPosInOther
         nullChunk->appendColumnChunk(
             other->nullChunk.get(), startPosInOtherChunk, startPosInChunk, numValuesToAppend);
     }
-    memcpy(buffer.get() + startPosInChunk * numBytesPerValue,
-        other->buffer.get() + startPosInOtherChunk * numBytesPerValue,
-        numValuesToAppend * numBytesPerValue);
+    memcpy(buffer.get() + startPosInChunk * numBytesPerValue(),
+        other->buffer.get() + startPosInOtherChunk * numBytesPerValue(),
+        numValuesToAppend * numBytesPerValue());
 }
 
 void ColumnChunk::appendArray(
@@ -145,21 +144,22 @@ void ColumnChunk::templateCopyArrowArray<bool>(
     arrow::Array* array, offset_t startPosInChunk, uint32_t numValuesToAppend) {
     auto* boolArray = (arrow::BooleanArray*)array;
     auto data = boolArray->data();
-    auto valuesInChunk = (bool*)(buffer.get());
+
+    auto arrowBuffer = boolArray->values()->data();
+    // Might read off the end with the cast, but copyNullMask should ignore the extra data
+    //
+    // The arrow BooleanArray offset should be the offset in bits
+    // Unfortunately this is not documented.
+    NullMask::copyNullMask((uint64_t*)arrowBuffer, boolArray->offset(), (uint64_t*)buffer.get(),
+        startPosInChunk, numValuesToAppend);
+
     if (data->MayHaveNulls()) {
-        for (auto i = 0u; i < numValuesToAppend; i++) {
-            auto posInChunk = startPosInChunk + i;
-            if (data->IsNull(i)) {
-                nullChunk->setNull(posInChunk, true);
-                continue;
-            }
-            valuesInChunk[posInChunk] = boolArray->Value(i);
-        }
-    } else {
-        for (auto i = 0u; i < numValuesToAppend; i++) {
-            auto posInChunk = startPosInChunk + i;
-            valuesInChunk[posInChunk] = boolArray->Value(i);
-        }
+        auto arrowNullBitMap = boolArray->null_bitmap_data();
+
+        // Offset should apply to both bool data and nulls
+        NullMask::copyNullMask((uint64_t*)arrowNullBitMap, boolArray->offset(),
+            (uint64_t*)nullChunk->buffer.get(), startPosInChunk, numValuesToAppend,
+            true /*invert*/);
     }
 }
 
@@ -177,14 +177,14 @@ void ColumnChunk::templateCopyArrowArray<uint8_t*>(
             }
             auto posInList = fixedSizedListArray->offset() + i;
             memcpy(buffer.get() + getOffsetInBuffer(posInChunk),
-                valuesInList + posInList * numBytesPerValue, numBytesPerValue);
+                valuesInList + posInList * numBytesPerValue(), numBytesPerValue());
         }
     } else {
         for (auto i = 0u; i < numValuesToAppend; i++) {
             auto posInChunk = startPosInChunk + i;
             auto posInList = fixedSizedListArray->offset() + i;
             memcpy(buffer.get() + getOffsetInBuffer(posInChunk),
-                valuesInList + posInList * numBytesPerValue, numBytesPerValue);
+                valuesInList + posInList * numBytesPerValue(), numBytesPerValue());
         }
     }
 }
@@ -246,7 +246,7 @@ uint32_t ColumnChunk::getDataTypeSizeInChunk(common::LogicalType& dataType) {
     case LogicalTypeID::INTERNAL_ID: {
         return sizeof(offset_t) * 8;
     }
-    case LogicalTypeID::NULL_: {
+    case LogicalTypeID::BOOL: {
         return 1;
     }
     default: {
@@ -259,11 +259,16 @@ uint32_t ColumnChunk::getDataTypeSizeInChunk(common::LogicalType& dataType) {
 // updated to support values sizes of less than one byte.
 // But for the moment, this is the only generic ColumnChunk function which is needed by
 // NullColumnChunk, and it's invoked directly on the nullColumn, so we don't need dynamic dispatch
-void NullColumnChunk::appendColumnChunk(NullColumnChunk* other,
-    common::offset_t startPosInOtherChunk, common::offset_t startPosInChunk,
-    uint32_t numValuesToAppend) {
-    NullMask::copyNullMask((uint64_t*)other->buffer.get(), startPosInOtherChunk,
+void BoolColumnChunk::appendColumnChunk(ColumnChunk* other, common::offset_t startPosInOtherChunk,
+    common::offset_t startPosInChunk, uint32_t numValuesToAppend) {
+    auto otherChunk = static_cast<BoolColumnChunk*>(other);
+    NullMask::copyNullMask((uint64_t*)otherChunk->buffer.get(), startPosInOtherChunk,
         (uint64_t*)buffer.get(), startPosInChunk, numValuesToAppend);
+
+    if (nullChunk) {
+        nullChunk->appendColumnChunk(
+            otherChunk->nullChunk.get(), startPosInOtherChunk, startPosInChunk, numValuesToAppend);
+    }
 }
 
 void FixedListColumnChunk::appendColumnChunk(kuzu::storage::ColumnChunk* other,
@@ -278,14 +283,16 @@ void FixedListColumnChunk::appendColumnChunk(kuzu::storage::ColumnChunk* other,
     for (auto i = 0u; i < numValuesToAppend; i++) {
         memcpy(buffer.get() + getOffsetInBuffer(startPosInChunk + i),
             otherChunk->buffer.get() + getOffsetInBuffer(startPosInOtherChunk + i),
-            numBytesPerValue);
+            numBytesPerValue());
     }
 }
 
 std::unique_ptr<ColumnChunk> ColumnChunkFactory::createColumnChunk(
     const LogicalType& dataType, CopyDescription* copyDescription) {
     switch (dataType.getLogicalTypeID()) {
-    case LogicalTypeID::BOOL:
+    case LogicalTypeID::BOOL: {
+        return std::make_unique<BoolColumnChunk>(copyDescription);
+    }
     case LogicalTypeID::INT64:
     case LogicalTypeID::INT32:
     case LogicalTypeID::INT16:
@@ -321,7 +328,7 @@ void ColumnChunk::setValueFromString<bool>(const char* value, uint64_t length, u
     std::istringstream boolStream{std::string(value)};
     bool booleanVal;
     boolStream >> std::boolalpha >> booleanVal;
-    setValue(booleanVal, pos);
+    static_cast<BoolColumnChunk*>(this)->setValue(booleanVal, pos);
 }
 
 // Fixed list
@@ -329,7 +336,7 @@ template<>
 void ColumnChunk::setValueFromString<uint8_t*>(const char* value, uint64_t length, uint64_t pos) {
     auto fixedListVal =
         TableCopyUtils::getArrowFixedList(value, 1, length - 2, dataType, *copyDescription);
-    memcpy(buffer.get() + pos * numBytesPerValue, fixedListVal.get(), numBytesPerValue);
+    memcpy(buffer.get() + pos * numBytesPerValue(), fixedListVal.get(), numBytesPerValue());
 }
 
 // Interval
@@ -356,11 +363,12 @@ void ColumnChunk::setValueFromString<timestamp_t>(
 
 common::offset_t ColumnChunk::getOffsetInBuffer(common::offset_t pos) const {
     auto numElementsInAPage =
-        PageUtils::getNumElementsInAPage(numBytesPerValue, false /* hasNull */);
-    auto posCursor = PageUtils::getPageByteCursorForPos(pos, numElementsInAPage, numBytesPerValue);
+        PageUtils::getNumElementsInAPage(numBytesPerValue(), false /* hasNull */);
+    auto posCursor =
+        PageUtils::getPageByteCursorForPos(pos, numElementsInAPage, numBytesPerValue());
     auto offsetInBuffer =
         posCursor.pageIdx * common::BufferPoolConstants::PAGE_4KB_SIZE + posCursor.offsetInPage;
-    assert(offsetInBuffer + numBytesPerValue <= numBytes);
+    assert(offsetInBuffer + numBytesPerValue() <= numBytes);
     return offsetInBuffer;
 }
 
