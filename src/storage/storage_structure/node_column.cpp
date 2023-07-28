@@ -58,6 +58,24 @@ void NullNodeColumnFunc::writeValuesToPage(
     NullMask::copyNullMask(vector->getNullMaskData(), posInVector, (uint64_t*)frame, posInFrame, 1);
 }
 
+void BoolNodeColumnFunc::readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
+    ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead) {
+    // Read bit-packed null flags from the frame into the result vector
+    // Casting to uint64_t should be safe as long as the page size is a multiple of 8 bytes.
+    // Otherwise it could read off the end of the page.
+    NullMask::copyNullMask((uint64_t*)frame, pageCursor.elemPosInPage,
+        (uint64_t*)resultVector->getData(), posInVector, numValuesToRead);
+}
+
+void BoolNodeColumnFunc::writeValuesToPage(
+    uint8_t* frame, uint16_t posInFrame, ValueVector* vector, uint32_t posInVector) {
+    // Casting to uint64_t should be safe as long as the page size is a multiple of 8 bytes.
+    // Otherwise it could read off the end of the page.
+    // TODO: Is this efficient for copying only a single bit?
+    NullMask::copyNullMask(
+        (uint64_t*)vector->getData(), posInVector, (uint64_t*)frame, posInFrame, 1);
+}
+
 NodeColumn::NodeColumn(const Property& property, BMFileHandle* nodeGroupsDataFH,
     BMFileHandle* nodeGroupsMetaFH, BufferManager* bufferManager, WAL* wal, bool requireNullColumn)
     : NodeColumn{property.dataType, property.metaDiskArrayHeaderInfo, nodeGroupsDataFH,
@@ -355,8 +373,8 @@ BoolNodeColumn::BoolNodeColumn(const catalog::MetaDiskArrayHeaderInfo& metaDAHea
     WAL* wal, bool requireNullColumn)
     : NodeColumn{LogicalType(LogicalTypeID::BOOL), metaDAHeaderInfo, nodeGroupsDataFH,
           nodeGroupsMetaFH, bufferManager, wal, requireNullColumn} {
-    readNodeColumnFunc = NullNodeColumnFunc::readValuesFromPage;
-    writeNodeColumnFunc = NullNodeColumnFunc::writeValuesToPage;
+    readNodeColumnFunc = BoolNodeColumnFunc::readValuesFromPage;
+    writeNodeColumnFunc = BoolNodeColumnFunc::writeValuesToPage;
     // 8 values per byte
     numValuesPerPage = PageUtils::getNumElementsInAPage(1, false) * 8;
     // Page size must be aligned to 8 byte chunks for the 64-bit NullMask algorithms to work
@@ -367,7 +385,10 @@ BoolNodeColumn::BoolNodeColumn(const catalog::MetaDiskArrayHeaderInfo& metaDAHea
 NullNodeColumn::NullNodeColumn(page_idx_t metaDAHeaderPageIdx, BMFileHandle* nodeGroupsDataFH,
     BMFileHandle* nodeGroupsMetaFH, BufferManager* bufferManager, WAL* wal)
     : BoolNodeColumn{MetaDiskArrayHeaderInfo{metaDAHeaderPageIdx}, nodeGroupsDataFH,
-          nodeGroupsMetaFH, bufferManager, wal, false /*requireNullColumn*/} {}
+          nodeGroupsMetaFH, bufferManager, wal, false /*requireNullColumn*/} {
+    readNodeColumnFunc = NullNodeColumnFunc::readValuesFromPage;
+    writeNodeColumnFunc = NullNodeColumnFunc::writeValuesToPage;
+}
 
 void NullNodeColumn::scan(
     Transaction* transaction, ValueVector* nodeIDVector, ValueVector* resultVector) {
@@ -379,7 +400,7 @@ void NullNodeColumn::lookup(
     lookupInternal(transaction, nodeIDVector, resultVector);
 }
 
-page_idx_t BoolNodeColumn::appendColumnChunk(
+page_idx_t NullNodeColumn::appendColumnChunk(
     ColumnChunk* columnChunk, page_idx_t startPageIdx, uint64_t nodeGroupIdx) {
     auto numPagesFlushed = columnChunk->flushBuffer(nodeGroupsDataFH, startPageIdx);
     columnChunksMetaDA->resize(nodeGroupIdx + 1);

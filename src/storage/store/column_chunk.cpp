@@ -18,8 +18,7 @@ ColumnChunk::ColumnChunk(LogicalType dataType, CopyDescription* copyDescription,
 ColumnChunk::ColumnChunk(
     LogicalType dataType, offset_t numValues, CopyDescription* copyDescription, bool hasNullChunk)
     : dataType{std::move(dataType)}, numBitsPerValue{getDataTypeSizeInChunk(this->dataType)},
-      numBytesPerValue{numBitsPerValue / 8}, numBytes{numBitsPerValue * numValues / 8},
-      copyDescription{copyDescription} {
+      numBytes{numBitsPerValue * numValues / 8}, copyDescription{copyDescription} {
     // TODO(bmwinger): Move logic into NullColumnChunk
     // Maybe we need a BaseColumnChunk which doesn't initialize the buffer, so that each subclass
     // can create a buffer that meets their requirements. Particularly when adding other compression
@@ -55,9 +54,9 @@ void ColumnChunk::appendColumnChunk(ColumnChunk* other, offset_t startPosInOther
         nullChunk->appendColumnChunk(
             other->nullChunk.get(), startPosInOtherChunk, startPosInChunk, numValuesToAppend);
     }
-    memcpy(buffer.get() + startPosInChunk * numBytesPerValue,
-        other->buffer.get() + startPosInOtherChunk * numBytesPerValue,
-        numValuesToAppend * numBytesPerValue);
+    memcpy(buffer.get() + startPosInChunk * numBytesPerValue(),
+        other->buffer.get() + startPosInOtherChunk * numBytesPerValue(),
+        numValuesToAppend * numBytesPerValue());
 }
 
 void ColumnChunk::appendArray(
@@ -178,14 +177,14 @@ void ColumnChunk::templateCopyArrowArray<uint8_t*>(
             }
             auto posInList = fixedSizedListArray->offset() + i;
             memcpy(buffer.get() + getOffsetInBuffer(posInChunk),
-                valuesInList + posInList * numBytesPerValue, numBytesPerValue);
+                valuesInList + posInList * numBytesPerValue(), numBytesPerValue());
         }
     } else {
         for (auto i = 0u; i < numValuesToAppend; i++) {
             auto posInChunk = startPosInChunk + i;
             auto posInList = fixedSizedListArray->offset() + i;
             memcpy(buffer.get() + getOffsetInBuffer(posInChunk),
-                valuesInList + posInList * numBytesPerValue, numBytesPerValue);
+                valuesInList + posInList * numBytesPerValue(), numBytesPerValue());
         }
     }
 }
@@ -291,7 +290,7 @@ void FixedListColumnChunk::appendColumnChunk(kuzu::storage::ColumnChunk* other,
     for (auto i = 0u; i < numValuesToAppend; i++) {
         memcpy(buffer.get() + getOffsetInBuffer(startPosInChunk + i),
             otherChunk->buffer.get() + getOffsetInBuffer(startPosInOtherChunk + i),
-            numBytesPerValue);
+            numBytesPerValue());
     }
 }
 
@@ -335,7 +334,7 @@ template<>
 void ColumnChunk::setValueFromString<uint8_t*>(const char* value, uint64_t length, uint64_t pos) {
     auto fixedListVal =
         TableCopyUtils::getArrowFixedList(value, 1, length - 2, dataType, *copyDescription);
-    memcpy(buffer.get() + pos * numBytesPerValue, fixedListVal.get(), numBytesPerValue);
+    memcpy(buffer.get() + pos * numBytesPerValue(), fixedListVal.get(), numBytesPerValue());
 }
 
 // Interval
@@ -362,11 +361,12 @@ void ColumnChunk::setValueFromString<timestamp_t>(
 
 common::offset_t ColumnChunk::getOffsetInBuffer(common::offset_t pos) const {
     auto numElementsInAPage =
-        PageUtils::getNumElementsInAPage(numBytesPerValue, false /* hasNull */);
-    auto posCursor = PageUtils::getPageByteCursorForPos(pos, numElementsInAPage, numBytesPerValue);
+        PageUtils::getNumElementsInAPage(numBytesPerValue(), false /* hasNull */);
+    auto posCursor =
+        PageUtils::getPageByteCursorForPos(pos, numElementsInAPage, numBytesPerValue());
     auto offsetInBuffer =
         posCursor.pageIdx * common::BufferPoolConstants::PAGE_4KB_SIZE + posCursor.offsetInPage;
-    assert(offsetInBuffer + numBytesPerValue <= numBytes);
+    assert(offsetInBuffer + numBytesPerValue() <= numBytes);
     return offsetInBuffer;
 }
 

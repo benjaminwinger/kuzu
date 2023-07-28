@@ -89,10 +89,11 @@ protected:
 
     common::offset_t getOffsetInBuffer(common::offset_t pos) const;
 
+    inline uint32_t numBytesPerValue() const { return numBitsPerValue / 8; }
+
 protected:
     common::LogicalType dataType;
     uint32_t numBitsPerValue;
-    uint32_t numBytesPerValue;
     uint64_t numBytes;
     std::unique_ptr<uint8_t[]> buffer;
     std::unique_ptr<NullColumnChunk> nullChunk;

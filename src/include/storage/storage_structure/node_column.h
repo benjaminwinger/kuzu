@@ -39,6 +39,13 @@ struct NullNodeColumnFunc {
         uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector, uint32_t posInVector);
 };
 
+struct BoolNodeColumnFunc {
+    static void readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
+        common::ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead);
+    static void writeValuesToPage(
+        uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector, uint32_t posInVector);
+};
+
 class NullNodeColumn;
 // TODO(Guodong): This is intentionally duplicated with `Column`, as for now, we don't change rel
 // tables. `Column` is used for rel tables only. Eventually, we should remove `Column`.
@@ -127,9 +134,6 @@ public:
     BoolNodeColumn(const catalog::MetaDiskArrayHeaderInfo& metaDAHeaderInfo,
         BMFileHandle* nodeGroupsDataFH, BMFileHandle* nodeGroupsMetaFH,
         BufferManager* bufferManager, WAL* wal, bool requireNullColumn = true);
-
-    common::page_idx_t appendColumnChunk(
-        ColumnChunk* columnChunk, common::page_idx_t startPageIdx, uint64_t nodeGroupIdx) final;
 };
 
 class NullNodeColumn : public BoolNodeColumn {
@@ -141,6 +145,9 @@ public:
         common::ValueVector* resultVector) final;
     void lookup(transaction::Transaction* transaction, common::ValueVector* nodeIDVector,
         common::ValueVector* resultVector) final;
+
+    common::page_idx_t appendColumnChunk(
+        ColumnChunk* columnChunk, common::page_idx_t startPageIdx, uint64_t nodeGroupIdx) final;
 
 protected:
     void writeInternal(common::offset_t nodeOffset, common::ValueVector* vectorToWriteFrom,
