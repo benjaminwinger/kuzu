@@ -63,7 +63,9 @@ public:
     inline void addProperty(const catalog::Property& property) {
         assert(!propertyColumns.contains(property.getPropertyID()));
         propertyColumns.emplace(property.getPropertyID(),
-            NodeColumnFactory::createNodeColumn(property, dataFH, dataFH, &bufferManager, wal));
+            NodeColumnFactory::createNodeColumn(property, dataFH, dataFH, &bufferManager, wal,
+                nodesStatisticsAndDeletedIDs->getPropertyStatisticsForTable(
+                    property.getTableID(), property.getPropertyID())));
     }
 
     void prepareCommit();

@@ -19,9 +19,9 @@ void StringNodeColumnFunc::writeStringValuesToPage(
 }
 
 StringNodeColumn::StringNodeColumn(LogicalType dataType, const MetadataDAHInfo& metaDAHeaderInfo,
-    BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal)
+    BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal, const PropertyStatistics &stats)
     : NodeColumn{
-          std::move(dataType), metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, true} {
+          std::move(dataType), metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, stats, true} {
     ovfPageIdxInChunk = ColumnChunk::getNumPagesForBytes(
         numBytesPerFixedSizedValue << StorageConstants::NODE_GROUP_SIZE_LOG2);
     if (this->dataType.getLogicalTypeID() == LogicalTypeID::STRING) {

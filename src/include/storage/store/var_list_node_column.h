@@ -46,12 +46,13 @@ class VarListNodeColumn : public NodeColumn {
 public:
     VarListNodeColumn(common::LogicalType dataType,
         const catalog::MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH,
-        BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal)
+        BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal, const PropertyStatistics &propertyStatistics)
         : NodeColumn{std::move(dataType), metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal,
-              true /* requireNullColumn */} {
+              propertyStatistics, true /* requireNullColumn */} {
+                  // TODO: Maybe child columns should get their own PropertyStatistics
         dataNodeColumn =
             NodeColumnFactory::createNodeColumn(*common::VarListType::getChildType(&this->dataType),
-                *metaDAHeaderInfo.childrenInfos[0], dataFH, metadataFH, bufferManager, wal);
+                *metaDAHeaderInfo.childrenInfos[0], dataFH, metadataFH, bufferManager, wal, propertyStatistics);
     }
 
     void scan(transaction::Transaction* transaction, common::node_group_idx_t nodeGroupIdx,

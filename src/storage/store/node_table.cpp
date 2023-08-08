@@ -24,7 +24,9 @@ void NodeTable::initializeData(NodeTableSchema* nodeTableSchema) {
 void NodeTable::initializeColumns(NodeTableSchema* nodeTableSchema) {
     for (auto& property : nodeTableSchema->getProperties()) {
         propertyColumns[property->getPropertyID()] =
-            NodeColumnFactory::createNodeColumn(*property, dataFH, metadataFH, &bufferManager, wal);
+            NodeColumnFactory::createNodeColumn(*property, dataFH, metadataFH, &bufferManager, wal,
+                getNodeStatisticsAndDeletedIDs()->getPropertyStatisticsForTable(
+                    property->getTableID(), property->getPropertyID()));
     }
 }
 

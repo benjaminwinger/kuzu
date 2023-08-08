@@ -11,19 +11,17 @@ namespace storage {
 class NodeStatisticsAndDeletedIDs : public TableStatistics {
 
 public:
-    NodeStatisticsAndDeletedIDs(common::table_id_t tableID, common::offset_t maxNodeOffset)
+    NodeStatisticsAndDeletedIDs(common::table_id_t tableID, common::offset_t maxNodeOffset,
+        std::unordered_map<common::property_id_t, PropertyStatistics>&& propertyStatistics)
         : NodeStatisticsAndDeletedIDs(tableID, maxNodeOffset,
-              std::vector<
-                  common::offset_t>() /* no deleted node offsets during initial loading */) {}
+              std::vector<common::offset_t>() /* no deleted node offsets during initial loading */,
+              std::move(propertyStatistics)) {}
 
     NodeStatisticsAndDeletedIDs(common::table_id_t tableID, common::offset_t maxNodeOffset,
-        const std::vector<common::offset_t>& deletedNodeOffsets);
+        const std::vector<common::offset_t>& deletedNodeOffsets,
+        std::unordered_map<common::property_id_t, PropertyStatistics>&& propertyStatistics);
 
-    NodeStatisticsAndDeletedIDs(const NodeStatisticsAndDeletedIDs& other)
-        : TableStatistics{other.getNumTuples()}, tableID{other.tableID},
-          adjListsAndColumns{other.adjListsAndColumns},
-          hasDeletedNodesPerMorsel{other.hasDeletedNodesPerMorsel},
-          deletedNodeOffsetsPerMorsel{other.deletedNodeOffsetsPerMorsel} {}
+    NodeStatisticsAndDeletedIDs(const NodeStatisticsAndDeletedIDs& other) = default;
 
     inline common::offset_t getMaxNodeOffset() {
         return getMaxNodeOffsetFromNumTuples(getNumTuples());
@@ -48,7 +46,7 @@ public:
 
     std::vector<common::offset_t> getDeletedNodeOffsets();
 
-    static inline uint64_t geNumTuplesFromMaxNodeOffset(common::offset_t maxNodeOffset) {
+    static inline uint64_t getNumTuplesFromMaxNodeOffset(common::offset_t maxNodeOffset) {
         return (maxNodeOffset == UINT64_MAX) ? 0ull : maxNodeOffset + 1ull;
     }
 
@@ -86,7 +84,7 @@ public:
         logger->info("Initialized {}.", "NodesStatisticsAndDeletedIDs");
     }
 
-    // Should be used ony by tests;
+    // Should be used only by tests;
     explicit NodesStatisticsAndDeletedIDs(
         std::unordered_map<common::table_id_t, std::unique_ptr<NodeStatisticsAndDeletedIDs>>&
             nodesStatisticsAndDeletedIDs);
@@ -179,10 +177,14 @@ protected:
 
     inline std::unique_ptr<TableStatistics> constructTableStatistic(
         catalog::TableSchema* tableSchema) override {
+        TablePropertyStats propertyStats;
+        for (auto property : tableSchema->getProperties()) {
+            propertyStats[property->getPropertyID()] = PropertyStatistics();
+        }
         // We use UINT64_MAX to represent an empty nodeTable which doesn't contain
         // any nodes.
         return std::make_unique<NodeStatisticsAndDeletedIDs>(
-            tableSchema->tableID, UINT64_MAX /* maxNodeOffset */);
+            tableSchema->tableID, UINT64_MAX /* maxNodeOffset */, std::move(propertyStats));
     }
 
     inline std::unique_ptr<TableStatistics> constructTableStatistic(
@@ -197,7 +199,8 @@ protected:
     }
 
     std::unique_ptr<TableStatistics> deserializeTableStatistics(uint64_t numTuples,
-        uint64_t& offset, common::FileInfo* fileInfo, uint64_t tableID) override;
+        TablePropertyStats&& propertyStats, uint64_t& offset, common::FileInfo* fileInfo,
+        uint64_t tableID) override;
 
     void serializeTableStatistics(
         TableStatistics* tableStatistics, uint64_t& offset, common::FileInfo* fileInfo) override;

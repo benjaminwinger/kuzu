@@ -289,6 +289,9 @@ uint32_t ColumnChunk::getDataTypeSizeInChunk(LogicalType& dataType) {
     // Used by NodeColumnn to represent the de-compressed size of booleans in-memory
     // Does not reflect the size of booleans on-disk in BoolColumnChunk
     case LogicalTypeID::BOOL: {
+        // This now refers to the size in-memory as used by NodeColumn, 
+        // but not the size on-disk (which is 1 bit).
+        // Maybe it should be moved elsewhere, but it would essentially just be duplicated in NodeColumn
         return 1;
     }
     default: {

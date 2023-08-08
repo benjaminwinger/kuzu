@@ -8,6 +8,8 @@
 namespace kuzu {
 namespace storage {
 
+class PropertyStatistics;
+
 using read_node_column_func_t = std::function<void(uint8_t* frame, PageElementCursor& pageCursor,
     common::ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead)>;
 using write_node_column_func_t = std::function<void(
@@ -50,10 +52,11 @@ class NullNodeColumn;
 class NodeColumn {
 public:
     NodeColumn(const catalog::Property& property, BMFileHandle* dataFH, BMFileHandle* metadataFH,
-        BufferManager* bufferManager, WAL* wal, bool requireNullColumn = true);
+        BufferManager* bufferManager, WAL* wal, const PropertyStatistics& propertyStatistics,
+        bool requireNullColumn = true);
     NodeColumn(common::LogicalType dataType, const catalog::MetadataDAHInfo& metaDAHeaderInfo,
         BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
-        bool requireNullColumn);
+        const PropertyStatistics& propertyStatistics, bool requireNullColumn);
     virtual ~NodeColumn() = default;
 
     // Expose for feature store
@@ -134,13 +137,14 @@ protected:
     std::vector<std::unique_ptr<NodeColumn>> childrenColumns;
     read_node_column_func_t readNodeColumnFunc;
     write_node_column_func_t writeNodeColumnFunc;
+    const PropertyStatistics& propertyStatistics;
 };
 
 class BoolNodeColumn : public NodeColumn {
 public:
     BoolNodeColumn(const catalog::MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH,
         BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
-        bool requireNullColumn = true);
+        const PropertyStatistics& propertyStatistics, bool requireNullColumn = true);
 
     void batchLookup(const common::offset_t* nodeOffsets, size_t size, uint8_t* result) final;
 };
@@ -148,7 +152,8 @@ public:
 class NullNodeColumn : public NodeColumn {
 public:
     NullNodeColumn(common::page_idx_t metaDAHPageIdx, BMFileHandle* dataFH,
-        BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal);
+        BMFileHandle* metadataFH, BufferManager* bufferManager,
+        const PropertyStatistics& propertyStatistics, WAL* wal);
 
     void scan(transaction::Transaction* transaction, common::ValueVector* nodeIDVector,
         common::ValueVector* resultVector) final;
@@ -178,13 +183,15 @@ public:
 
 struct NodeColumnFactory {
     static inline std::unique_ptr<NodeColumn> createNodeColumn(const catalog::Property& property,
-        BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal) {
+        BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
+        const PropertyStatistics& propertyStatistics) {
         return createNodeColumn(*property.getDataType(), *property.getMetadataDAHInfo(), dataFH,
-            metadataFH, bufferManager, wal);
+            metadataFH, bufferManager, wal, propertyStatistics);
     }
     static std::unique_ptr<NodeColumn> createNodeColumn(const common::LogicalType& dataType,
         const catalog::MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH,
-        BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal);
+        BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
+        const PropertyStatistics& propertyStatistics);
 };
 
 } // namespace storage

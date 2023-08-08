@@ -43,11 +43,11 @@ offset_t RelsStatistics::getNextRelOffset(
 }
 
 std::unique_ptr<TableStatistics> RelsStatistics::deserializeTableStatistics(
-    uint64_t numTuples, uint64_t& offset, FileInfo* fileInfo, uint64_t tableID) {
+    uint64_t numTuples, TablePropertyStats &&propertyStats, uint64_t& offset, FileInfo* fileInfo, uint64_t tableID) {
     std::vector<std::unordered_map<table_id_t, uint64_t>> numRelsPerDirectionBoundTable{2};
     offset_t nextRelOffset;
     SerDeser::deserializeValue(nextRelOffset, fileInfo, offset);
-    return std::make_unique<RelStatistics>(numTuples, nextRelOffset);
+    return std::make_unique<RelStatistics>(numTuples, std::move(propertyStats), nextRelOffset);
 }
 
 void RelsStatistics::serializeTableStatistics(

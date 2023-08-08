@@ -69,7 +69,10 @@ public:
                common::BufferPoolConstants::PAGE_4KB_SIZE;
     }
 
-    inline uint64_t getNumBytesPerValue() const { return numBytesPerValue; }
+    inline uint64_t getNumBytesPerValue() const {
+        assert(dataType.getLogicalTypeID() != common::LogicalTypeID::BOOL);
+        return numBytesPerValue;
+    }
 
     virtual void write(const common::Value& val, uint64_t posToWrite);
 
