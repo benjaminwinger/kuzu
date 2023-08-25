@@ -1,12 +1,14 @@
 #include "node_column.h"
+#include "storage/copier/compression.h"
 
 namespace kuzu {
 namespace storage {
 
 class StructNodeColumn : public NodeColumn {
 public:
-    StructNodeColumn(common::LogicalType dataType, const catalog::MetadataDAHInfo& metaDAHeaderInfo,
-        BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
+    StructNodeColumn(std::unique_ptr<PhysicalMapping> physicalMapping,
+        const catalog::MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH,
+        BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
         transaction::Transaction* transaction);
 
     void scan(transaction::Transaction* transaction, common::node_group_idx_t nodeGroupIdx,

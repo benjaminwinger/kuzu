@@ -142,7 +142,7 @@ offset_t VarListNodeColumn::readOffset(
     auto pageCursor = PageUtils::getPageElementCursorForPos(offsetInNodeGroup, numValuesPerPage);
     pageCursor.pageIdx += metadataDA->get(nodeGroupIdx, transaction->getType()).pageIdx;
     readFromPage(transaction, pageCursor.pageIdx, [&](uint8_t* frame) -> void {
-        readNodeColumnFunc(
+        physicalMapping->readValuesFromPage(
             frame, pageCursor, offsetVector.get(), 0 /* posInVector */, 1 /* numValuesToRead */);
     });
     return offsetVector->getValue<offset_t>(0);

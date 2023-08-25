@@ -1,6 +1,7 @@
 #pragma once
 
 #include "node_column.h"
+#include "storage/copier/compression.h"
 
 // List is a nested data type which is stored as two columns:
 // 1. Offset column (type: INT64). Using offset to partition the data column into multiple lists.
@@ -46,12 +47,12 @@ class VarListNodeColumn : public NodeColumn {
     friend class VarListLocalColumn;
 
 public:
-    VarListNodeColumn(common::LogicalType dataType,
+    VarListNodeColumn(std::unique_ptr<PhysicalMapping> physicalMapping,
         const catalog::MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH,
         BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
         transaction::Transaction* transaction)
-        : NodeColumn{std::move(dataType), metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal,
-              transaction, true /* requireNullColumn */} {
+        : NodeColumn{std::move(physicalMapping), metaDAHeaderInfo, dataFH, metadataFH,
+              bufferManager, wal, transaction, true /* requireNullColumn */} {
         dataNodeColumn = NodeColumnFactory::createNodeColumn(
             *common::VarListType::getChildType(&this->dataType), *metaDAHeaderInfo.childrenInfos[0],
             dataFH, metadataFH, bufferManager, wal, transaction);

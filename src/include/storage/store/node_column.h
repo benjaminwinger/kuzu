@@ -2,6 +2,7 @@
 
 #include "catalog/catalog.h"
 #include "storage/copier/column_chunk.h"
+#include "storage/copier/compression.h"
 #include "storage/storage_structure/disk_array.h"
 #include "storage/storage_structure/storage_structure.h"
 
@@ -36,13 +37,6 @@ struct NullNodeColumnFunc {
         uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector, uint32_t posInVector);
 };
 
-struct BoolNodeColumnFunc {
-    static void readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
-        common::ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead);
-    static void writeValueToPage(
-        uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector, uint32_t posInVector);
-};
-
 class NullNodeColumn;
 class StructNodeColumn;
 // TODO(Guodong): This is intentionally duplicated with `Column`, as for now, we don't change rel
@@ -55,11 +49,9 @@ class NodeColumn {
     friend class StructNodeColumn;
 
 public:
-    NodeColumn(const catalog::Property& property, BMFileHandle* dataFH, BMFileHandle* metadataFH,
-        BufferManager* bufferManager, WAL* wal, transaction::Transaction* transaction,
-        bool requireNullColumn = true);
-    NodeColumn(common::LogicalType dataType, const catalog::MetadataDAHInfo& metaDAHeaderInfo,
-        BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
+    NodeColumn(std::unique_ptr<PhysicalMapping> physicalMapping,
+        const catalog::MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH,
+        BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
         transaction::Transaction* transaction, bool requireNullColumn);
     virtual ~NodeColumn() = default;
 
@@ -138,8 +130,7 @@ protected:
     std::unique_ptr<InMemDiskArray<MainColumnChunkMetadata>> metadataDA;
     std::unique_ptr<NodeColumn> nullColumn;
     std::vector<std::unique_ptr<NodeColumn>> childrenColumns;
-    read_node_column_func_t readNodeColumnFunc;
-    write_node_column_func_t writeNodeColumnFunc;
+    std::unique_ptr<PhysicalMapping> physicalMapping;
 };
 
 class BoolNodeColumn : public NodeColumn {
