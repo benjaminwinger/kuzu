@@ -478,7 +478,11 @@ std::unique_ptr<NodeColumn> NodeColumnFactory::createNodeColumn(const LogicalTyp
     }
     case LogicalTypeID::INT64:
     case LogicalTypeID::INT32:
-    case LogicalTypeID::INT16:
+    case LogicalTypeID::INT16: {
+        return std::make_unique<NodeColumn>(
+            std::make_unique<CompressedMapping>(std::make_unique<CopyCompression>(dataType)),
+            metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction, true);
+    }
     case LogicalTypeID::DOUBLE:
     case LogicalTypeID::FLOAT:
     case LogicalTypeID::DATE:
@@ -519,6 +523,8 @@ std::unique_ptr<NodeColumn> NodeColumnFactory::createNodeColumn(const LogicalTyp
     }
     }
 }
+
+NodeColumn::~NodeColumn() = default;
 
 } // namespace storage
 } // namespace kuzu

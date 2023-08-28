@@ -1,9 +1,12 @@
 #pragma once
 
+#include <math.h>
+
 #include <cstdint>
 
 #include "common/types/types.h"
 #include "common/vector/value_vector.h"
+#include <bit>
 // TODO(bmwinger): Move to cpp
 #include "arrow/array.h"
 #include "common/null_mask.h"
@@ -14,6 +17,35 @@ class Array;
 
 namespace kuzu {
 namespace storage {
+
+namespace duckdb {
+using datatype = int32_t;
+// From DDB
+using data_ptr_t = uint8_t*;
+using const_data_ptr_t = const uint8_t*;
+template<typename T>
+void Store(const T& val, data_ptr_t ptr) {
+    memcpy(ptr, (void*)&val, sizeof(val));
+}
+
+template<typename T>
+const T Load(const_data_ptr_t ptr) {
+    T ret;
+    memcpy(&ret, ptr, sizeof(ret));
+    return ret;
+}
+
+// Sign bit extension
+static void SignExtend(data_ptr_t dst, int width, size_t len) {
+    datatype const mask = 1 << (width - 1);
+    for (int i = 0; i < len; ++i) {
+        datatype value = Load<datatype>(dst + i * sizeof(datatype));
+        value = value & ((1 << width) - 1);
+        datatype result = (value ^ mask) - mask;
+        Store(result, dst + i * sizeof(datatype));
+    }
+}
+} // namespace duckdb
 
 // Returns the size of the data type in bytes
 // TODO(bmwinger): Replace with functions in CompressionAlg
@@ -49,11 +81,14 @@ inline uint32_t getDataTypeSizeInChunk(const common::LogicalType& dataType) {
 // layout (i.e. turning logical data into physical data) as opposed to the boolcompression, which
 // handles the bool physical type.
 //
-// In fact, it may make sense to merge this back into ColumnChunk
+// In fact, it may make sense to merge this back into ColumnChunk (wouldn't allow the
+// CompressedMapping to own a CompressionAlg)
 //
 // templateCopyArrowArray needs a type argument, but read/write from page can't have one for
 // copycompression So split them up, which will let CompressionAlg take a type argument
 
+// TODO it doesn't make much sense to allow the CompressionAlg to keep state if it doesn't also own
+// its buffer But keeping state might be helpful in some cases (but not yet anyway)
 class CompressionAlg {
 public:
     virtual ~CompressionAlg() = default;
@@ -81,18 +116,25 @@ public:
 
     // Copies compressed data from one buffer to another
     // Offsets refer to value offsets, not byte offsets
+    /*
     virtual void copyCompressed(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
         uint64_t dstOffset, uint64_t numValues) = 0;
+        */
 
     // Copies arrow data from the source array
     // Null values are copied elsewhere and should be ignored (though the null info can be used to
     // skip copying null values).
+    /*
     virtual void compressFromArrowArray(arrow::Array* sourceArray, uint8_t* dstBuffer,
         common::offset_t startPosInChunk, uint32_t numValuesToAppend) = 0;
+    */
+
+    // virtual uint64_t numBytesForValues(common::offset_t numValues) const = 0;
+    virtual uint64_t numBytesForCompression(
+        const uint8_t* srcBuffer, common::offset_t numValues) const = 0;
 };
 
 // Compression alg which does not compress values and instead just copies them.
-template<typename T>
 class CopyCompression : public CompressionAlg {
 public:
     CopyCompression(const common::LogicalType& logicalType) : mLogicalType{logicalType} {}
@@ -122,16 +164,18 @@ public:
         compress(srcBuffer, srcOffset, dstBuffer, dstOffset, numValues);
     }
 
+    /*
     inline void copyCompressed(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
         uint64_t dstOffset, uint64_t numValues) final {
         compress(srcBuffer, srcOffset, dstBuffer, dstOffset, numValues);
-    }
+    }*/
 
+    /*
     void compressFromArrowArray(arrow::Array* sourceArray, uint8_t* dstBuffer,
         common::offset_t startPosInChunk, uint32_t numValuesToAppend) final {
         const auto& arrowArray = sourceArray->data();
         auto valuesInChunk = (T*)dstBuffer;
-        auto valuesInArray = arrowArray->GetValues<T>(1 /* value buffer */);
+        auto valuesInArray = arrowArray->GetValues<T>(1 \/* value buffer *\/);
         // FIXME(bmwinger): Double check this works, but can probably just memcpy
         // std::memcpy(valuesInChunk + startPosInChunk, valuesInArray, numValuesToAppend);
         if (arrowArray->MayHaveNulls()) {
@@ -148,6 +192,62 @@ public:
                 valuesInChunk[posInChunk] = valuesInArray[i];
             }
         }
+    }
+    */
+
+    uint64_t numBytesForCompression(
+        const uint8_t* srcBuffer, common::offset_t numValues) const final {
+        return getDataTypeSizeInChunk(logicalType()) * numValues;
+    }
+
+protected:
+    common::LogicalType mLogicalType;
+};
+
+template<typename T>
+constexpr common::LogicalTypeID getLogicalType() {
+    if (std::is_same<T, bool>()) {
+        return common::LogicalTypeID::BOOL;
+    } else if (std::is_same<T, int16_t>()) {
+        return common::LogicalTypeID::INT16;
+    } else if (std::is_same<T, int32_t>()) {
+        return common::LogicalTypeID::INT32;
+    } else if (std::is_same<T, int64_t>()) {
+        return common::LogicalTypeID::INT64;
+    }
+    throw std::domain_error("Type does not have a corresponding physical type");
+}
+
+template<typename T, typename U>
+class IntegerBitpacking : public CompressionAlg {
+public:
+    IntegerBitpacking(const common::LogicalType& logicalType) : mLogicalType{logicalType} {}
+
+    void setValueFromUncompressed(uint8_t* srcBuffer, common::offset_t posInSrc, uint8_t* dstBuffer,
+        common::offset_t posInDst) final;
+
+    uint32_t getBitWidth(const uint8_t* srcBuffer, uint64_t numValues) const {
+        auto max = 0ull;
+        for (int i = 0; i < numValues; i++) {
+            auto abs = std::abs((T)srcBuffer[i * sizeof(T)]);
+            if (abs > max) {
+                max = abs;
+            }
+        }
+        return std::bit_width(max);
+    }
+
+    void compress(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
+        uint64_t dstOffset, uint64_t numValues) final;
+
+    void decompress(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
+        uint64_t dstOffset, uint64_t numValues) final;
+
+    // FIXME: computing this twice is inefficient.
+    // Maybe we should store more state.
+    uint64_t numBytesForCompression(
+        const uint8_t* srcBuffer, common::offset_t numValues) const final {
+        return 1 /* byte storing bit width */ + numValues * getBitWidth(srcBuffer, numValues) / 8;
     }
 
 protected:
@@ -174,7 +274,8 @@ public:
         uint64_t dstOffset, uint64_t numValues) final {
         // TODO(bmwinger): Optimize, e.g. using an integer bitpacking function
         for (auto i = 0ull; i < numValues; i++) {
-            common::NullMask::setNull((uint64_t*)dstBuffer, dstOffset, srcBuffer[srcOffset]);
+            common::NullMask::setNull(
+                (uint64_t*)dstBuffer, dstOffset + i, srcBuffer[srcOffset + i]);
         }
     }
 
@@ -187,12 +288,14 @@ public:
         }
     }
 
+    /*
     void copyCompressed(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
         uint64_t dstOffset, uint64_t numValues) final {
         common::NullMask::copyNullMask(
             (const uint64_t*)srcBuffer, srcOffset, (uint64_t*)dstBuffer, dstOffset, numValues);
-    }
+    }*/
 
+    /*
     void compressFromArrowArray(arrow::Array* sourceArray, uint8_t* dstBuffer,
         common::offset_t startPosInChunk, uint32_t numValuesToAppend) final {
         auto* boolArray = (arrow::BooleanArray*)sourceArray;
@@ -205,6 +308,13 @@ public:
         // Unfortunately this is not documented.
         common::NullMask::copyNullMask((uint64_t*)arrowBuffer, boolArray->offset(),
             (uint64_t*)dstBuffer, startPosInChunk, numValuesToAppend);
+    }
+    */
+
+    uint64_t numBytesForCompression(
+        const uint8_t* srcBuffer, common::offset_t numValues) const final {
+        // 8 values per byte, and we need a buffer size which is a multiple of 8 bytes
+        return ceil(numValues / 8.0 / 8.0) * 8;
     }
 };
 

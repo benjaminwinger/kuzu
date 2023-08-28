@@ -1,6 +1,7 @@
 #include "storage/copier/column_chunk.h"
 
 #include "arrow/array.h"
+#include "storage/copier/compression.h"
 #include "storage/copier/string_column_chunk.h"
 #include "storage/copier/struct_column_chunk.h"
 #include "storage/copier/table_copy_utils.h"
@@ -242,11 +243,16 @@ void ColumnChunk::templateCopyStringArrowArray(
 template<>
 void ColumnChunk::templateCopyArrowArray<bool>(
     arrow::Array* array, offset_t startPosInChunk, uint32_t numValuesToAppend) {
-    // Copy data
-    static_cast<CompressedColumnChunk<bool>*>(this)->getCompressionMut().compressFromArrowArray(
-        array, buffer.get(), startPosInChunk, numValuesToAppend);
     auto* boolArray = (arrow::BooleanArray*)array;
     auto data = boolArray->data();
+
+    auto arrowBuffer = boolArray->values()->data();
+    // Might read off the end with the cast, but copyNullMask should ignore the extra data
+    //
+    // The arrow BooleanArray offset should be the offset in bits
+    // Unfortunately this is not documented.
+    NullMask::copyNullMask((uint64_t*)arrowBuffer, boolArray->offset(), (uint64_t*)buffer.get(),
+        startPosInChunk, numValuesToAppend);
 
     if (data->MayHaveNulls()) {
         auto arrowNullBitMap = boolArray->null_bitmap_data();
@@ -263,8 +269,6 @@ void ColumnChunk::templateCopyArrowArray<uint8_t*>(
     arrow::Array* array, offset_t startPosInChunk, uint32_t numValuesToAppend) {
     auto fixedSizedListArray = (arrow::FixedSizeListArray*)array;
     auto valuesInList = (uint8_t*)fixedSizedListArray->values()->data()->buffers[1]->data();
-    // TODO: What's the performance impact of doing a fast copy of all the null data and all the
-    // value data instead of value by value?
     if (fixedSizedListArray->data()->MayHaveNulls()) {
         for (auto i = 0u; i < numValuesToAppend; i++) {
             auto posInChunk = startPosInChunk + i;
@@ -327,60 +331,56 @@ page_idx_t ColumnChunk::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageId
     return getNumPagesForBuffer();
 }
 
-template<typename T>
-constexpr PhysicalTypeID getPhysicalType() {
-    if (std::is_same<T, bool>()) {
-        return PhysicalTypeID::BOOL;
-    } else if (std::is_same<T, int16_t>()) {
-        return PhysicalTypeID::INT16;
-    } else if (std::is_same<T, int32_t>()) {
-        return PhysicalTypeID::INT32;
-    } else if (std::is_same<T, int64_t>()) {
-        return PhysicalTypeID::INT64;
+uint32_t ColumnChunk::getDataTypeSizeInChunk(LogicalType& dataType) {
+    switch (dataType.getLogicalTypeID()) {
+    case LogicalTypeID::STRUCT: {
+        return 0;
     }
-    throw std::domain_error("Type does not have a corresponding physical type");
+    case LogicalTypeID::STRING: {
+        return sizeof(ku_string_t);
+    }
+    case LogicalTypeID::VAR_LIST: {
+        return sizeof(offset_t);
+    }
+    case LogicalTypeID::INTERNAL_ID: {
+        return sizeof(offset_t);
+    }
+    case LogicalTypeID::SERIAL: {
+        return sizeof(int64_t);
+    }
+    // Used by NodeColumnn to represent the de-compressed size of booleans in-memory
+    // Does not reflect the size of booleans on-disk in BoolColumnChunk
+    case LogicalTypeID::BOOL: {
+        return 1;
+    }
+    default: {
+        return StorageUtils::getDataTypeSize(dataType);
+    }
+    }
 }
 
-template<typename T>
-constexpr arrow::Type::type getArrowType() {
-    if (std::is_same<T, bool>()) {
-        return arrow::Type::BOOL;
-    } else if (std::is_same<T, int16_t>()) {
-        return arrow::Type::INT16;
-    } else if (std::is_same<T, int32_t>()) {
-        return arrow::Type::INT32;
-    } else if (std::is_same<T, int64_t>()) {
-        return arrow::Type::INT64;
-    }
-    throw std::domain_error("Type does not have a corresponding arrow type");
-}
-
-template<typename T>
-void CompressedColumnChunk<T>::append(
-    common::ValueVector* vector, common::offset_t startPosInChunk) {
-    assert(vector->dataType.getPhysicalType() == getPhysicalType<T>());
+void BoolColumnChunk::append(common::ValueVector* vector, common::offset_t startPosInChunk) {
+    assert(vector->dataType.getPhysicalType() == PhysicalTypeID::BOOL);
     for (auto i = 0u; i < vector->state->selVector->selectedSize; i++) {
         auto pos = vector->state->selVector->selectedPositions[i];
         nullChunk->setNull(startPosInChunk + i, vector->isNull(pos));
-        alg->setValueFromUncompressed(vector->getData(), pos, buffer.get(), startPosInChunk + i);
+        common::NullMask::setNull(
+            (uint64_t*)buffer.get(), startPosInChunk + i, vector->getValue<bool>(pos));
     }
     numValues += vector->state->selVector->selectedSize;
 }
 
-template<typename T>
-void CompressedColumnChunk<T>::append(
+void BoolColumnChunk::append(
     arrow::Array* array, common::offset_t startPosInChunk, uint32_t numValuesToAppend) {
-    assert(array->type_id() == getArrowType<T>());
-    // TODO(bmwinger): This needs to be compression-specific
-    templateCopyArrowArray<T>(array, startPosInChunk, numValuesToAppend);
+    assert(array->type_id() == arrow::Type::BOOL);
+    templateCopyArrowArray<bool>(array, startPosInChunk, numValuesToAppend);
     numValues += numValuesToAppend;
 }
 
-template<typename T>
-void CompressedColumnChunk<T>::append(ColumnChunk* other, common::offset_t startPosInOtherChunk,
+void BoolColumnChunk::append(ColumnChunk* other, common::offset_t startPosInOtherChunk,
     common::offset_t startPosInChunk, uint32_t numValuesToAppend) {
-    alg->copyCompressed(static_cast<CompressedColumnChunk*>(other)->buffer.get(),
-        startPosInOtherChunk, buffer.get(), startPosInChunk, numValuesToAppend);
+    NullMask::copyNullMask((uint64_t*)static_cast<BoolColumnChunk*>(other)->buffer.get(),
+        startPosInOtherChunk, (uint64_t*)buffer.get(), startPosInChunk, numValuesToAppend);
 
     if (nullChunk) {
         nullChunk->append(
@@ -450,7 +450,9 @@ std::unique_ptr<ColumnChunk> ColumnChunkFactory::createColumnChunk(
     } break;
     case PhysicalTypeID::INT64:
     case PhysicalTypeID::INT32:
-    case PhysicalTypeID::INT16:
+    case PhysicalTypeID::INT16: /*{
+        chunk = std::make_unique<CompressedColumnChunk>(std::make_unique<CopyCompression>(dataType),
+    copyDescription); } break;                     */
     case PhysicalTypeID::DOUBLE:
     case PhysicalTypeID::FLOAT:
     case PhysicalTypeID::INTERVAL: {
@@ -541,6 +543,41 @@ void ColumnChunk::copyVectorToBuffer(
         memcpy(bufferToWrite, vectorDataToWriteFrom + pos * numBytesPerValue, numBytesPerValue);
         bufferToWrite += numBytesPerValue;
     }
+}
+
+inline void BoolColumnChunk::initialize(common::offset_t capacity) {
+    numBytesPerValue = 0;
+    bufferSize = numBytesForValues(capacity);
+    buffer = std::make_unique<uint8_t[]>(bufferSize);
+    if (nullChunk) {
+        static_cast<BoolColumnChunk*>(nullChunk.get())->initialize(capacity);
+    }
+}
+
+void BoolColumnChunk::resize(uint64_t capacity) {
+    auto numBytesAfterResize = numBytesForValues(capacity);
+    assert(numBytesAfterResize > bufferSize);
+    auto reservedBuffer = std::make_unique<uint8_t[]>(numBytesAfterResize);
+    memset(reservedBuffer.get(), 0 /* non null */, numBytesAfterResize);
+    memcpy(reservedBuffer.get(), buffer.get(), bufferSize);
+    buffer = std::move(reservedBuffer);
+    bufferSize = numBytesAfterResize;
+    if (nullChunk) {
+        nullChunk->resize(capacity);
+    }
+}
+
+CompressedColumnChunk::CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg,
+    common::CopyDescription* copyDescription, bool hasNullChunk)
+    : ColumnChunk(alg->logicalType(), copyDescription, hasNullChunk) {}
+
+page_idx_t CompressedColumnChunk::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx) {
+    auto compressedSize = alg->numBytesForCompression(buffer.get(), numValues);
+    auto compressedBuffer = std::make_unique<uint8_t>(compressedSize);
+    alg->compress(buffer.get(), 0, compressedBuffer.get(), 0, numValues);
+    FileUtils::writeToFile(dataFH->getFileInfo(), compressedBuffer.get(), bufferSize,
+        startPageIdx * BufferPoolConstants::PAGE_4KB_SIZE);
+    return getNumPagesForBytes(compressedSize);
 }
 
 } // namespace storage

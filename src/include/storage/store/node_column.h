@@ -2,7 +2,6 @@
 
 #include "catalog/catalog.h"
 #include "storage/copier/column_chunk.h"
-#include "storage/copier/compression.h"
 #include "storage/storage_structure/disk_array.h"
 #include "storage/storage_structure/storage_structure.h"
 
@@ -12,6 +11,8 @@ class TransactionTests;
 }
 
 namespace storage {
+
+class PhysicalMapping;
 
 using read_node_column_func_t = std::function<void(uint8_t* frame, PageElementCursor& pageCursor,
     common::ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead)>;
@@ -53,7 +54,7 @@ public:
         const catalog::MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH,
         BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
         transaction::Transaction* transaction, bool requireNullColumn);
-    virtual ~NodeColumn() = default;
+    virtual ~NodeColumn();
 
     // Expose for feature store
     virtual void batchLookup(transaction::Transaction* transaction,

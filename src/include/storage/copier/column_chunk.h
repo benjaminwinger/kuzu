@@ -1,13 +1,9 @@
 #pragma once
 
-#include <cstdint>
-
 #include "common/copier_config/copier_config.h"
-#include "common/exception.h"
 #include "common/types/types.h"
 #include "common/vector/value_vector.h"
 #include "storage/buffer_manager/bm_file_handle.h"
-#include "storage/copier/compression.h"
 #include "storage/wal/wal.h"
 #include "transaction/transaction.h"
 
@@ -18,6 +14,7 @@ class Array;
 namespace kuzu {
 namespace storage {
 
+class CompressionAlg;
 class NullColumnChunk;
 
 struct ColumnChunkMetadata {
@@ -93,6 +90,9 @@ public:
 
     virtual common::page_idx_t flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx);
 
+    // Returns the size of the data type in bytes
+    static uint32_t getDataTypeSizeInChunk(common::LogicalType& dataType);
+
     template<typename T>
     void setValueFromString(const char* value, uint64_t length, common::offset_t pos) {
         auto val = common::StringCastUtils::castToNum<T>(value, length);
@@ -160,12 +160,33 @@ protected:
     uint64_t numValues;
 };
 
-template<typename T>
+template<>
+inline void ColumnChunk::setValue(bool val, common::offset_t pos) {
+    // Buffer is rounded up to the nearest 8 bytes so that this cast is safe
+    common::NullMask::setNull((uint64_t*)buffer.get(), pos, val);
+}
+
+template<>
+inline bool ColumnChunk::getValue(common::offset_t pos) const {
+    // Buffer is rounded up to the nearest 8 bytes so that this cast is safe
+    return common::NullMask::isNull((uint64_t*)buffer.get(), pos);
+}
+
 class CompressedColumnChunk : public ColumnChunk {
 public:
-    CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg,
-        common::CopyDescription* copyDescription, bool hasNullChunk = true)
-        : ColumnChunk(alg->logicalType(), copyDescription, hasNullChunk), alg{std::move(alg)} {}
+    explicit CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg,
+        common::CopyDescription* copyDescription, bool hasNullChunk = true);
+    common::page_idx_t flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx) final;
+
+private:
+    std::unique_ptr<CompressionAlg> alg;
+};
+
+class BoolColumnChunk : public ColumnChunk {
+public:
+    BoolColumnChunk(common::CopyDescription* copyDescription, bool hasNullChunk = true)
+        : ColumnChunk(
+              common::LogicalType(common::LogicalTypeID::BOOL), copyDescription, hasNullChunk) {}
 
     void append(common::ValueVector* vector, common::offset_t startPosInChunk) final;
 
@@ -177,49 +198,14 @@ public:
 
     void resize(uint64_t capacity) final;
 
-    CompressionAlg& getCompressionMut() { return *alg; }
-
-    const CompressionAlg& getCompression() const { return *alg; }
-
 protected:
-    // TODO: Move to CompressionAlg
     inline uint64_t numBytesForValues(common::offset_t numValues) const {
         // 8 values per byte, and we need a buffer size which is a multiple of 8 bytes
         return ceil(numValues / 8.0 / 8.0) * 8;
     }
 
-    inline void initialize(common::offset_t capacity) override {
-        numBytesPerValue = 0;
-        bufferSize = numBytesForValues(capacity);
-        buffer = std::make_unique<uint8_t[]>(bufferSize);
-        if (nullChunk) {
-            static_cast<CompressedColumnChunk*>(nullChunk.get())->initialize(capacity);
-        }
-    }
-
-    std::unique_ptr<CompressionAlg> alg;
+    void initialize(common::offset_t capacity) final;
 };
-
-class BoolColumnChunk : public CompressedColumnChunk<bool> {
-public:
-    BoolColumnChunk(common::CopyDescription* copyDescription, bool hasNullChunk = true)
-        : CompressedColumnChunk(
-              std::make_unique<BoolCompression>(), copyDescription, hasNullChunk) {}
-};
-
-template<>
-inline void ColumnChunk::setValue(bool val, common::offset_t pos) {
-    static_cast<CompressedColumnChunk<bool>*>(this)->getCompressionMut().setValueFromUncompressed(
-        (uint8_t*)&val, 0, buffer.get(), pos);
-}
-
-template<>
-inline bool ColumnChunk::getValue(common::offset_t pos) const {
-    bool result;
-    static_cast<const CompressedColumnChunk<bool>*>(this)->getCompression().getValue(
-        buffer.get(), pos, (uint8_t*)&result);
-    return result;
-}
 
 class NullColumnChunk : public BoolColumnChunk {
 public:
@@ -255,20 +241,6 @@ public:
         buffer = std::make_unique<uint8_t[]>(bufferSize);
     }
 };
-
-template<typename T>
-void CompressedColumnChunk<T>::resize(uint64_t capacity) {
-    auto numBytesAfterResize = numBytesForValues(capacity);
-    assert(numBytesAfterResize > bufferSize);
-    auto reservedBuffer = std::make_unique<uint8_t[]>(numBytesAfterResize);
-    memset(reservedBuffer.get(), 0 /* non null */, numBytesAfterResize);
-    memcpy(reservedBuffer.get(), buffer.get(), bufferSize);
-    buffer = std::move(reservedBuffer);
-    bufferSize = numBytesAfterResize;
-    if (nullChunk) {
-        nullChunk->resize(capacity);
-    }
-}
 
 struct ColumnChunkFactory {
     static std::unique_ptr<ColumnChunk> createColumnChunk(

@@ -20,3 +20,5 @@ add_library(kuzu_storage
 set(ALL_OBJECT_FILES
         ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:kuzu_storage>
         PARENT_SCOPE)
+
+target_link_libraries(kuzu_storage kuzu_storage_in_mem_csv_copier)
