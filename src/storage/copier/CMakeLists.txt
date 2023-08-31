@@ -16,4 +16,4 @@ set(ALL_OBJECT_FILES
         ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:kuzu_storage_in_mem_csv_copier>
         PARENT_SCOPE)
 
-target_link_libraries(kuzu_storage_in_mem_csv_copier PRIVATE fastpfor)
+target_link_libraries(kuzu_storage_in_mem_csv_copier PRIVATE fastpfor oroch)

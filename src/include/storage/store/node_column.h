@@ -14,30 +14,6 @@ namespace storage {
 
 class PhysicalMapping;
 
-using read_node_column_func_t = std::function<void(uint8_t* frame, PageElementCursor& pageCursor,
-    common::ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead)>;
-using write_node_column_func_t = std::function<void(
-    uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector, uint32_t posInVector)>;
-
-struct FixedSizedNodeColumnFunc {
-    static void readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
-        common::ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead);
-    static void writeValueToPage(
-        uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector, uint32_t posInVecto);
-
-    static void readInternalIDValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
-        common::ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead);
-    static void writeInternalIDValueToPage(
-        uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector, uint32_t posInVecto);
-};
-
-struct NullNodeColumnFunc {
-    static void readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
-        common::ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead);
-    static void writeValueToPage(
-        uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector, uint32_t posInVector);
-};
-
 class NullNodeColumn;
 class StructNodeColumn;
 // TODO(Guodong): This is intentionally duplicated with `Column`, as for now, we don't change rel
@@ -53,7 +29,7 @@ public:
     NodeColumn(std::unique_ptr<PhysicalMapping> physicalMapping,
         const catalog::MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH,
         BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
-        transaction::Transaction* transaction, bool requireNullColumn);
+        transaction::Transaction* transaction, bool requireNullColumn = true);
     virtual ~NodeColumn();
 
     // Expose for feature store

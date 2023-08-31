@@ -73,20 +73,6 @@ inline uint32_t getDataTypeSizeInChunk(const common::LogicalType& dataType) {
     }
 }
 
-// TODO: this could probably be split up to better represent how NodeColumn and ColumnChunk use the
-// information In one case we're manipulating compressed data, in the other we're dealing with
-// storing and retrieving data from disk. they are related, but not the same.
-//
-// e.g. the Copy variants, particularly string, internalID, where we handle changes to the data
-// layout (i.e. turning logical data into physical data) as opposed to the boolcompression, which
-// handles the bool physical type.
-//
-// In fact, it may make sense to merge this back into ColumnChunk (wouldn't allow the
-// CompressedMapping to own a CompressionAlg)
-//
-// templateCopyArrowArray needs a type argument, but read/write from page can't have one for
-// copycompression So split them up, which will let CompressionAlg take a type argument
-
 // TODO it doesn't make much sense to allow the CompressionAlg to keep state if it doesn't also own
 // its buffer But keeping state might be helpful in some cases (but not yet anyway)
 class CompressionAlg {
@@ -98,11 +84,6 @@ public:
     // Offsets refer to value offsets, not byte offsets
     virtual void setValueFromUncompressed(uint8_t* srcBuffer, common::offset_t posInSrc,
         uint8_t* dstBuffer, common::offset_t posInDst) = 0;
-
-    // Reads a value from the buffer at the given position and stores it at the given memory address
-    // dst should point to a uncompressed value
-    virtual inline void getValue(
-        const uint8_t* buffer, common::offset_t pos, uint8_t* dst) const = 0;
 
     // Takes uncompressed data from the srcBuffer and compresses it into the dstBuffer
     // The dstBufferSize is the size returned by numBytesForCompression.
@@ -124,11 +105,6 @@ class CopyCompression : public CompressionAlg {
 public:
     CopyCompression(const common::LogicalType& logicalType) : mLogicalType{logicalType} {}
     const common::LogicalType& logicalType() const override { return mLogicalType; }
-
-    inline void getValue(const uint8_t* buffer, common::offset_t pos, uint8_t* dst) const override {
-        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType());
-        memcpy(dst, buffer + pos * numBytesPerValue, numBytesPerValue);
-    }
 
     void setValueFromUncompressed(uint8_t* srcBuffer, common::offset_t posInSrc, uint8_t* dstBuffer,
         common::offset_t posInDst) final {
@@ -160,7 +136,7 @@ protected:
 };
 
 template<typename T>
-constexpr common::LogicalTypeID getLogicalType() {
+constexpr common::LogicalTypeID getLogicalTypeID() {
     if (std::is_same<T, bool>()) {
         return common::LogicalTypeID::BOOL;
     } else if (std::is_same<T, int16_t>()) {
@@ -175,21 +151,33 @@ constexpr common::LogicalTypeID getLogicalType() {
 
 template<typename T, typename U>
 class IntegerBitpacking : public CompressionAlg {
+    static const common::LogicalType LOGICAL_TYPE;
+
 public:
-    IntegerBitpacking(const common::LogicalType& logicalType) : mLogicalType{logicalType} {}
+    const common::LogicalType& logicalType() const override { return LOGICAL_TYPE; }
 
     void setValueFromUncompressed(uint8_t* srcBuffer, common::offset_t posInSrc, uint8_t* dstBuffer,
         common::offset_t posInDst) final;
 
-    uint32_t getBitWidth(const uint8_t* srcBuffer, uint64_t numValues) const {
+    std::pair<uint8_t, bool> getBitWidth(const uint8_t* srcBuffer, uint64_t numValues) const {
         auto max = 0ull;
+        auto hasNegative = false;
         for (int i = 0; i < numValues; i++) {
-            auto abs = std::abs((T)srcBuffer[i * sizeof(T)]);
+            T value = ((T*)srcBuffer)[i];
+            auto abs = std::abs(value);
             if (abs > max) {
                 max = abs;
             }
+            if (value < 0) {
+                hasNegative = true;
+            }
         }
-        return std::bit_width(max);
+        if (hasNegative) {
+            // Needs an extra bit for two's complement encoding
+            return std::make_pair(std::bit_width(max) + 1, true);
+        } else {
+            return std::make_pair(std::bit_width(max), false);
+        }
     }
 
     void compress(const uint8_t* srcBuffer, uint64_t numValues, uint8_t* dstBuffer,
@@ -198,11 +186,61 @@ public:
     void decompress(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
         uint64_t dstOffset, uint64_t numValues) final;
 
-    // FIXME: computing this twice is inefficient.
-    // Maybe we should store more state.
+    // TODO(bmwinger): maybe store the calculated bit width and whether or not there are
+    // But it feels weird to do this if we don't own the buffer...
+    // Maybe we should just have compress produce a buffer. decompress is simpler.
     uint64_t numBytesForCompression(
         const uint8_t* srcBuffer, common::offset_t numValues) const final {
-        return 1 /* byte storing bit width */ + numValues * getBitWidth(srcBuffer, numValues) / 8;
+        return 1 /* byte storing bit width */ + numValues * getBitWidth(srcBuffer, numValues).first / 8;
+    }
+
+protected:
+    common::LogicalType mLogicalType;
+};
+
+template<typename T, typename U>
+class IntegerZigZagBitpacking : public CompressionAlg {
+    static const common::LogicalType LOGICAL_TYPE;
+
+public:
+    const common::LogicalType& logicalType() const override { return LOGICAL_TYPE; }
+
+    void setValueFromUncompressed(uint8_t* srcBuffer, common::offset_t posInSrc, uint8_t* dstBuffer,
+        common::offset_t posInDst) final;
+
+    std::pair<uint8_t, bool> getBitWidth(const uint8_t* srcBuffer, uint64_t numValues) const {
+        auto max = 0ull;
+        auto hasNegative = false;
+        for (int i = 0; i < numValues; i++) {
+            T value = ((T*)srcBuffer)[i];
+            auto abs = std::abs(value);
+            if (abs > max) {
+                max = abs;
+            }
+            if (value < 0) {
+                hasNegative = true;
+            }
+        }
+        if (hasNegative) {
+            // Needs an extra bit for zigzag encoding
+            return std::make_pair(std::bit_width(max) + 1, true);
+        } else {
+            return std::make_pair(std::bit_width(max), false);
+        }
+    }
+
+    void compress(const uint8_t* srcBuffer, uint64_t numValues, uint8_t* dstBuffer,
+        uint64_t dstBufferSize) final;
+
+    void decompress(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
+        uint64_t dstOffset, uint64_t numValues) final;
+
+    // TODO(bmwinger): maybe store the calculated bit width and whether or not there are
+    // But it feels weird to do this if we don't own the buffer...
+    // Maybe we should just have compress produce a buffer. decompress is simpler.
+    uint64_t numBytesForCompression(
+        const uint8_t* srcBuffer, common::offset_t numValues) const final {
+        return 1 /* byte storing bit width */ + numValues * getBitWidth(srcBuffer, numValues).first / 8;
     }
 
 protected:
@@ -218,11 +256,6 @@ public:
         common::offset_t posInDst) final {
         auto val = ((bool*)srcBuffer)[posInSrc];
         common::NullMask::setNull((uint64_t*)dstBuffer, posInDst, val);
-    }
-
-    inline void getValue(const uint8_t* buffer, common::offset_t pos, uint8_t* dst) const final {
-        // Buffer is rounded up to the nearest 8 bytes so that this cast is safe
-        *dst = common::NullMask::isNull((uint64_t*)buffer, pos);
     }
 
     void compress(const uint8_t* srcBuffer, uint64_t numValues, uint8_t* dstBuffer,
@@ -278,6 +311,28 @@ public:
     }
 
     std::unique_ptr<CompressionAlg> alg;
+};
+
+// Mapping for nulls where the values are bitpacked both in-memory and on-disk
+class NullMapping: public PhysicalMapping {
+    static const common::LogicalType LOGICAL_TYPE;
+public:
+    inline const common::LogicalType& logicalType() const final { return LOGICAL_TYPE; }
+
+    void readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
+        common::ValueVector* resultVector, uint32_t posInVector,
+        uint32_t numValuesToRead) override {
+        // Read bit-packed null flags from the frame into the result vector
+        // Casting to uint64_t should be safe as long as the page size is a multiple of 8 bytes.
+        // Otherwise, it could read off the end of the page.
+        resultVector->setNullFromBits(
+            (uint64_t*)frame, pageCursor.elemPosInPage, posInVector, numValuesToRead); 
+    }
+    void writeValueToPage(uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector,
+        uint32_t posInVector) override {
+        common::NullMask::setNull(
+            (uint64_t*)frame, posInFrame, common::NullMask::isNull(vector->getNullMaskData(), posInVector));
+    }
 };
 
 // Compression alg which does not compress values and instead just copies them.

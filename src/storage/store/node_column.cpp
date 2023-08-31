@@ -16,53 +16,6 @@ using namespace kuzu::transaction;
 namespace kuzu {
 namespace storage {
 
-void FixedSizedNodeColumnFunc::readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
-    ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead) {
-    auto numBytesPerValue = resultVector->getNumBytesPerValue();
-    memcpy(resultVector->getData() + posInVector * numBytesPerValue,
-        frame + pageCursor.elemPosInPage * numBytesPerValue, numValuesToRead * numBytesPerValue);
-}
-
-void FixedSizedNodeColumnFunc::writeValueToPage(
-    uint8_t* frame, uint16_t posInFrame, ValueVector* vector, uint32_t posInVector) {
-    auto numBytesPerValue = vector->getNumBytesPerValue();
-    memcpy(frame + posInFrame * numBytesPerValue,
-        vector->getData() + posInVector * numBytesPerValue, numBytesPerValue);
-}
-
-void FixedSizedNodeColumnFunc::readInternalIDValuesFromPage(uint8_t* frame,
-    PageElementCursor& pageCursor, ValueVector* resultVector, uint32_t posInVector,
-    uint32_t numValuesToRead) {
-    auto resultData = (internalID_t*)resultVector->getData();
-    for (auto i = 0u; i < numValuesToRead; i++) {
-        auto posInFrame = pageCursor.elemPosInPage + i;
-        resultData[posInVector + i].offset = *(offset_t*)(frame + (posInFrame * sizeof(offset_t)));
-    }
-}
-
-void FixedSizedNodeColumnFunc::writeInternalIDValueToPage(
-    uint8_t* frame, uint16_t posInFrame, ValueVector* vector, uint32_t posInVector) {
-    auto relID = vector->getValue<relID_t>(posInVector);
-    memcpy(frame + posInFrame * sizeof(offset_t), &relID.offset, sizeof(offset_t));
-}
-
-void NullNodeColumnFunc::readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
-    ValueVector* resultVector, uint32_t posInVector, uint32_t numValuesToRead) {
-    // Read bit-packed null flags from the frame into the result vector
-    // Casting to uint64_t should be safe as long as the page size is a multiple of 8 bytes.
-    // Otherwise, it could read off the end of the page.
-    resultVector->setNullFromBits(
-        (uint64_t*)frame, pageCursor.elemPosInPage, posInVector, numValuesToRead);
-}
-
-void NullNodeColumnFunc::writeValueToPage(
-    uint8_t* frame, uint16_t posInFrame, ValueVector* vector, uint32_t posInVector) {
-    // Casting to uint64_t should be safe as long as the page size is a multiple of 8 bytes.
-    // Otherwise it could read off the end of the page.
-    NullMask::setNull(
-        (uint64_t*)frame, posInFrame, NullMask::isNull(vector->getNullMaskData(), posInVector));
-}
-
 NodeColumn::NodeColumn(std::unique_ptr<PhysicalMapping> physicalMapping,
     const MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH, BMFileHandle* metadataFH,
     BufferManager* bufferManager, WAL* wal, transaction::Transaction* transaction,
@@ -393,9 +346,8 @@ BoolNodeColumn::BoolNodeColumn(const MetadataDAHInfo& metaDAHeaderInfo, BMFileHa
 
 NullNodeColumn::NullNodeColumn(page_idx_t metaDAHPageIdx, BMFileHandle* dataFH,
     BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal, Transaction* transaction)
-    : NodeColumn{std::make_unique<CompressedMapping>(std::make_unique<BoolCompression>()),
-          MetadataDAHInfo{metaDAHPageIdx}, dataFH, metadataFH, bufferManager, wal, transaction,
-          false /*requireNullColumn*/} {
+    : NodeColumn{std::make_unique<NullMapping>(), MetadataDAHInfo{metaDAHPageIdx}, dataFH,
+          metadataFH, bufferManager, wal, transaction, false /*requireNullColumn*/} {
     // 8 values per byte
     numValuesPerPage = PageUtils::getNumElementsInAPage(1, false /*requireNullColumn*/) * 8;
 }
@@ -475,14 +427,25 @@ std::unique_ptr<NodeColumn> NodeColumnFactory::createNodeColumn(const LogicalTyp
     switch (dataType.getLogicalTypeID()) {
     case LogicalTypeID::BOOL: {
         return std::make_unique<BoolNodeColumn>(
-            metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction, true);
+            metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
     }
-    case LogicalTypeID::INT64:
-    case LogicalTypeID::INT32:
+    case LogicalTypeID::INT64: {
+        return std::make_unique<NodeColumn>(
+            std::make_unique<CompressedMapping>(
+                std::make_unique<IntegerZigZagBitpacking<int64_t, uint64_t>>()),
+            metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
+    }
+    case LogicalTypeID::INT32: {
+        return std::make_unique<NodeColumn>(
+            std::make_unique<CompressedMapping>(
+                std::make_unique<IntegerZigZagBitpacking<int32_t, uint32_t>>()),
+            metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
+    }
     case LogicalTypeID::INT16: {
         return std::make_unique<NodeColumn>(
-            std::make_unique<CompressedMapping>(std::make_unique<CopyCompression>(dataType)),
-            metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction, true);
+            std::make_unique<CompressedMapping>(
+                std::make_unique<IntegerZigZagBitpacking<int16_t, uint16_t>>()),
+            metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
     }
     case LogicalTypeID::DOUBLE:
     case LogicalTypeID::FLOAT:
@@ -491,11 +454,11 @@ std::unique_ptr<NodeColumn> NodeColumnFactory::createNodeColumn(const LogicalTyp
     case LogicalTypeID::INTERVAL:
     case LogicalTypeID::FIXED_LIST: {
         return std::make_unique<NodeColumn>(std::make_unique<FixedValueMapping>(dataType),
-            metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction, true);
+            metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
     }
     case LogicalTypeID::INTERNAL_ID: {
         return std::make_unique<NodeColumn>(std::make_unique<InternalIDMapping>(), metaDAHeaderInfo,
-            dataFH, metadataFH, bufferManager, wal, transaction, true);
+            dataFH, metadataFH, bufferManager, wal, transaction);
     }
     case LogicalTypeID::BLOB: {
         return std::make_unique<StringNodeColumn>(std::make_unique<FixedValueMapping>(dataType),
