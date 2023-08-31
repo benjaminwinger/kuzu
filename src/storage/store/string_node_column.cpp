@@ -1,5 +1,6 @@
 #include "storage/store/string_node_column.h"
 
+#include "storage/copier/compression.h"
 #include "storage/copier/string_column_chunk.h"
 
 using namespace kuzu::catalog;
@@ -9,7 +10,7 @@ using namespace kuzu::transaction;
 namespace kuzu {
 namespace storage {
 
-void StringNodeColumnFunc::writeStringValuesToPage(
+void CopyString::writeValueToPage(
     uint8_t* frame, uint16_t posInFrame, ValueVector* vector, uint32_t posInVector) {
     auto kuStrInFrame = (ku_string_t*)(frame + (posInFrame * sizeof(ku_string_t)));
     auto kuStrInVector = vector->getValue<ku_string_t>(posInVector);
@@ -19,14 +20,11 @@ void StringNodeColumnFunc::writeStringValuesToPage(
     kuStrInFrame->overflowPtr = kuStrInVector.overflowPtr;
 }
 
-StringNodeColumn::StringNodeColumn(LogicalType dataType, const MetadataDAHInfo& metaDAHeaderInfo,
-    BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
-    transaction::Transaction* transaction)
-    : NodeColumn{std::move(dataType), metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal,
-          transaction, true} {
-    if (this->dataType.getLogicalTypeID() == LogicalTypeID::STRING) {
-        writeNodeColumnFunc = StringNodeColumnFunc::writeStringValuesToPage;
-    }
+StringNodeColumn::StringNodeColumn(std::unique_ptr<PhysicalMapping> physicalMapping,
+    const MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH, BMFileHandle* metadataFH,
+    BufferManager* bufferManager, WAL* wal, transaction::Transaction* transaction)
+    : NodeColumn{std::move(physicalMapping), metaDAHeaderInfo, dataFH, metadataFH, bufferManager,
+          wal, transaction, true} {
     overflowMetadataDA = std::make_unique<InMemDiskArray<OverflowColumnChunkMetadata>>(*metadataFH,
         StorageStructureID::newMetadataID(), metaDAHeaderInfo.childrenInfos[0]->dataDAHPageIdx,
         bufferManager, wal, transaction);

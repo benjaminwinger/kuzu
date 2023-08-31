@@ -15,6 +15,7 @@ namespace kuzu {
 namespace storage {
 
 class NullColumnChunk;
+class CompressionAlg;
 
 struct BaseColumnChunkMetadata {
     common::page_idx_t pageIdx;
@@ -173,6 +174,17 @@ inline bool ColumnChunk::getValue(common::offset_t pos) const {
     return common::NullMask::isNull((uint64_t*)buffer.get(), pos);
 }
 
+// Column chunk which is compressed during flushBuffer, but otherwise maintained uncompressed
+class CompressedColumnChunk : public ColumnChunk {
+public:
+    explicit CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg,
+            common::CopyDescription *copyDescription, bool hasNullChunk = true);
+    common::page_idx_t flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx) final;
+protected:
+    std::unique_ptr<CompressionAlg> alg;
+};
+
+// Stored as bitpacked booleans in-memory and on-disk
 class BoolColumnChunk : public ColumnChunk {
 public:
     BoolColumnChunk(common::CopyDescription* copyDescription, bool hasNullChunk = true)

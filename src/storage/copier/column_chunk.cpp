@@ -6,6 +6,7 @@
 #include "storage/copier/table_copy_utils.h"
 #include "storage/copier/var_list_column_chunk.h"
 #include "storage/storage_structure/storage_structure_utils.h"
+#include "storage/copier/compression.h"
 
 using namespace kuzu::common;
 using namespace kuzu::transaction;
@@ -562,6 +563,19 @@ void BoolColumnChunk::resize(uint64_t capacity) {
     if (nullChunk) {
         nullChunk->resize(capacity);
     }
+}
+
+CompressedColumnChunk::CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg,
+        common::CopyDescription *copyDescription, bool hasNullChunk)
+    : ColumnChunk(alg->logicalType(), copyDescription, hasNullChunk) {}
+
+page_idx_t CompressedColumnChunk::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx) {
+    auto compressedSize = alg->numBytesForCompression(buffer.get(), numValues);
+    auto compressedBuffer = std::make_unique<uint8_t>(compressedSize);
+    alg->compress(buffer.get(), numValues, compressedBuffer.get(), compressedSize);
+    FileUtils::writeToFile(dataFH->getFileInfo(), compressedBuffer.get(), bufferSize,
+            startPageIdx * BufferPoolConstants::PAGE_4KB_SIZE);
+    return getNumPagesForBytes(compressedSize);
 }
 
 } // namespace storage

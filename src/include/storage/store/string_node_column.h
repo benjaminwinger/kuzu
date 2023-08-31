@@ -1,19 +1,24 @@
 #pragma once
 
 #include "node_column.h"
+#include "storage/copier/compression.h"
 
 namespace kuzu {
 namespace storage {
 
-struct StringNodeColumnFunc {
-    static void writeStringValuesToPage(
+class CopyString : public FixedValueMapping {
+public:
+    CopyString() : FixedValueMapping(common::LogicalType(common::LogicalTypeID::STRING)) {}
+
+    void writeValueToPage(
         uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector, uint32_t posInVector);
 };
 
 class StringNodeColumn : public NodeColumn {
 public:
-    StringNodeColumn(common::LogicalType dataType, const catalog::MetadataDAHInfo& metaDAHeaderInfo,
-        BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
+    StringNodeColumn(std::unique_ptr<PhysicalMapping> physicalMapping,
+        const catalog::MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH,
+        BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
         transaction::Transaction* transaction);
 
     void scan(transaction::Transaction* transaction, common::node_group_idx_t nodeGroupIdx,

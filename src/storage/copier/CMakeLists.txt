@@ -1,6 +1,7 @@
 add_library(kuzu_storage_in_mem_csv_copier
         OBJECT
         column_chunk.cpp
+        compression.cpp
         node_group.cpp
         npy_reader.cpp
         reader_state.cpp
@@ -14,3 +15,5 @@ add_library(kuzu_storage_in_mem_csv_copier
 set(ALL_OBJECT_FILES
         ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:kuzu_storage_in_mem_csv_copier>
         PARENT_SCOPE)
+
+target_link_libraries(kuzu_storage_in_mem_csv_copier PRIVATE fastpfor)
