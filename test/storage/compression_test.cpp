@@ -34,9 +34,16 @@ TEST(CompressionTests, CopyCompressionTest) {
     test_compression(alg, src);
 }
 
-TEST(CompressionTests, IntegerPackingTest) {
+TEST(CompressionTests, IntegerPackingTest32) {
     std::vector<int32_t> src(32, 6);
     auto alg = IntegerBitpacking<int32_t, uint32_t>();
+    ASSERT_EQ(alg.getBitWidth((uint8_t*)src.data(), src.size()).first, std::bit_width(6u));
+    test_compression(alg, src);
+}
+
+TEST(CompressionTests, IntegerPackingTest64) {
+    std::vector<int64_t> src(32, 6);
+    auto alg = IntegerBitpacking<int64_t, uint64_t>();
     ASSERT_EQ(alg.getBitWidth((uint8_t*)src.data(), src.size()).first, std::bit_width(6u));
     test_compression(alg, src);
 }
@@ -53,29 +60,6 @@ TEST(CompressionTests, IntegerPackingTestNegative64) {
     std::vector<int64_t> src(32, -6);
     src[5] = 20;
     auto alg = IntegerBitpacking<int64_t, uint64_t>();
-    ASSERT_EQ(alg.getBitWidth((uint8_t*)src.data(), src.size()).first, std::bit_width(20u) + 1);
-    test_compression(alg, src);
-}
-
-TEST(CompressionTests, IntegerZigZagPackingTest) {
-    std::vector<int32_t> src{1,2,3,4,5,6};
-    auto alg = IntegerZigZagBitpacking<int32_t, uint32_t>();
-    ASSERT_EQ(alg.getBitWidth((uint8_t*)src.data(), src.size()).first, std::bit_width(6u));
-    test_compression(alg, src);
-}
-
-TEST(CompressionTests, IntegerZigZagPackingTestNegative16) {
-    std::vector<int16_t> src(32, -6);
-    src[5] = 20;
-    auto alg = IntegerZigZagBitpacking<int16_t, uint16_t>();
-    ASSERT_EQ(alg.getBitWidth((uint8_t*)src.data(), src.size()).first, std::bit_width(20u) + 1);
-    test_compression(alg, src);
-}
-
-TEST(CompressionTests, IntegerZigZagPackingTestNegative32) {
-    std::vector<int32_t> src(32, -6);
-    src[5] = 20;
-    auto alg = IntegerZigZagBitpacking<int32_t, uint32_t>();
     ASSERT_EQ(alg.getBitWidth((uint8_t*)src.data(), src.size()).first, std::bit_width(20u) + 1);
     test_compression(alg, src);
 }

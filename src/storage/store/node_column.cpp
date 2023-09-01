@@ -46,8 +46,7 @@ void NodeColumn::batchLookup(
         auto cursor = PageUtils::getPageElementCursorForPos(nodeOffset, numValuesPerPage);
         cursor.pageIdx += metadataDA->get(nodeGroupIdx, transaction->getType()).pageIdx;
         readFromPage(transaction, cursor.pageIdx, [&](uint8_t* frame) -> void {
-            memcpy(result + i * numBytesPerFixedSizedValue,
-                frame + (cursor.elemPosInPage * numBytesPerFixedSizedValue),
+            physicalMapping->getValue(frame, cursor.elemPosInPage, result + i * numBytesPerFixedSizedValue,
                 numBytesPerFixedSizedValue);
         });
     }
@@ -432,21 +431,21 @@ std::unique_ptr<NodeColumn> NodeColumnFactory::createNodeColumn(const LogicalTyp
     case LogicalTypeID::INT64: {
         return std::make_unique<NodeColumn>(
             std::make_unique<CompressedMapping>(
-                std::make_unique<IntegerZigZagBitpacking<int64_t, uint64_t>>()),
+                std::make_unique<IntegerBitpacking<int64_t, uint64_t>>()),
             metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
     }
     case LogicalTypeID::INT32: {
         return std::make_unique<NodeColumn>(
             std::make_unique<CompressedMapping>(
-                std::make_unique<IntegerZigZagBitpacking<int32_t, uint32_t>>()),
+                std::make_unique<IntegerBitpacking<int32_t, uint32_t>>()),
             metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
     }
-    case LogicalTypeID::INT16: {
-        return std::make_unique<NodeColumn>(
-            std::make_unique<CompressedMapping>(
-                std::make_unique<IntegerZigZagBitpacking<int16_t, uint16_t>>()),
-            metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
-    }
+    case LogicalTypeID::INT16: /* {
+         return std::make_unique<NodeColumn>(
+             std::make_unique<CompressedMapping>(
+                 std::make_unique<IntegerBitpacking<int16_t, uint16_t>>()),
+             metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
+     }*/
     case LogicalTypeID::DOUBLE:
     case LogicalTypeID::FLOAT:
     case LogicalTypeID::DATE:

@@ -453,7 +453,7 @@ std::unique_ptr<ColumnChunk> ColumnChunkFactory::createColumnChunk(
             chunk = std::make_unique<SerialColumnChunk>();
         } else {
             chunk = std::make_unique<CompressedColumnChunk>(
-                std::make_unique<IntegerZigZagBitpacking<int64_t, uint64_t>>(), copyDescription);
+                std::make_unique<IntegerBitpacking<int64_t, uint64_t>>(), copyDescription);
         }
     }
     case PhysicalTypeID::INT32: {
@@ -461,17 +461,17 @@ std::unique_ptr<ColumnChunk> ColumnChunkFactory::createColumnChunk(
             chunk = std::make_unique<SerialColumnChunk>();
         } else {
             chunk = std::make_unique<CompressedColumnChunk>(
-                std::make_unique<IntegerZigZagBitpacking<int32_t, uint32_t>>(), copyDescription);
+                std::make_unique<IntegerBitpacking<int32_t, uint32_t>>(), copyDescription);
         }
     }
-    case PhysicalTypeID::INT16: {
-        if (dataType.getLogicalTypeID() == LogicalTypeID::SERIAL) {
-            chunk = std::make_unique<SerialColumnChunk>();
-        } else {
-            chunk = std::make_unique<CompressedColumnChunk>(
-                std::make_unique<IntegerZigZagBitpacking<int16_t, uint16_t>>(), copyDescription);
-        }
-    }
+    case PhysicalTypeID::INT16: /* {
+         if (dataType.getLogicalTypeID() == LogicalTypeID::SERIAL) {
+             chunk = std::make_unique<SerialColumnChunk>();
+         } else {
+             chunk = std::make_unique<CompressedColumnChunk>(
+                 std::make_unique<IntegerBitpacking<int16_t, uint16_t>>(), copyDescription);
+         }
+     }*/
     case PhysicalTypeID::DOUBLE:
     case PhysicalTypeID::FLOAT:
     case PhysicalTypeID::INTERVAL: {
