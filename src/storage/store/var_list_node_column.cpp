@@ -139,8 +139,9 @@ offset_t VarListNodeColumn::readOffset(
     Transaction* transaction, node_group_idx_t nodeGroupIdx, offset_t offsetInNodeGroup) {
     auto offsetVector = std::make_unique<ValueVector>(LogicalTypeID::INT64);
     offsetVector->state = DataChunkState::getSingleValueDataChunkState();
-    auto pageCursor = PageUtils::getPageElementCursorForPos(offsetInNodeGroup, numValuesPerPage);
-    pageCursor.pageIdx += metadataDA->get(nodeGroupIdx, transaction->getType()).pageIdx;
+    auto chunkMeta = metadataDA->get(nodeGroupIdx, transaction->getType());
+    auto pageCursor = PageUtils::getPageElementCursorForPos(offsetInNodeGroup, chunkMeta.numValuesPerPage);
+    pageCursor.pageIdx += chunkMeta.pageIdx;
     readFromPage(transaction, pageCursor.pageIdx, [&](uint8_t* frame) -> void {
         physicalMapping->readValuesFromPage(
             frame, pageCursor, offsetVector.get(), 0 /* posInVector */, 1 /* numValuesToRead */);

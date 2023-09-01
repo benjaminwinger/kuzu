@@ -97,31 +97,25 @@ void IntegerBitpacking<T, U>::getValue(
 }
 
 template<typename T, typename U>
-void IntegerBitpacking<T, U>::compress(
-    const uint8_t* srcBuffer, uint64_t numValues, uint8_t* dstBuffer, uint64_t dstBufferSize) {
-    // uint8_t bitWidth = (dstBufferSize - 1) / sizeof(T);
-    // assert(bitWidth == ;
-    auto result = getBitWidth(srcBuffer, numValues);
-    uint8_t bitWidth = result.first;
-    bool hasNegative = result.second;
+uint64_t IntegerBitpacking<T, U>::compressNextPage(
+    const uint8_t* &srcBuffer, uint64_t numValuesRemaining, uint8_t* dstBuffer, uint64_t dstBufferSize) {
+    dstBuffer++[0] = BitpackHeader(bitWidth, hasNegative).getHeaderByte();
 
-    // Six bits are needed for the bit width (fewer for smaller types, but the header byte is the
-    // same for simplicity) One bit (the eighth) is needed to indicate if there are negative values
-    // The seventh bit is unused
-    dstBuffer[0] = bitWidth;
-    dstBuffer[0] |= hasNegative << 7;
-    dstBuffer++;
-    // FIXME(bmwinger): will overflow data with fewer than 32 values
-    assert(numValues >= 32);
+    auto numValues = std::min(numValuesRemaining, numValuesPerPage(dstBufferSize, bitWidth));
+    // Round down to nearest multiple of 32 to ensure that we don't write any extra values
+    // Rounding up could overflow the buffer
+    numValues -= numValues % 32;
+    assert(dstBufferSize >= 32);
     for (auto i = 0ull; i < numValues; i += 32) {
         FastPForLib::fastpack((const U*)srcBuffer + i, (uint32_t*)dstBuffer, bitWidth);
         // fastpack packs 32 values at a time, i.e. 4 bytes per bit of width.
         dstBuffer += bitWidth * 4;
     }
+    return numValues * bitWidth / 8;
 }
 
 template<typename T, typename U>
-void IntegerBitpacking<T, U>::decompress(const uint8_t* srcBuffer, uint64_t srcOffset,
+void IntegerBitpacking<T, U>::decompressFromPage(const uint8_t* srcBuffer, uint64_t srcOffset,
     uint8_t* dstBuffer, uint64_t dstOffset, uint64_t numValues) {
     auto header = BitpackHeader::readHeaderByte(srcBuffer++[0]);
     auto chunkSize = 32;

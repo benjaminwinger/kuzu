@@ -28,10 +28,6 @@ NodeColumn::NodeColumn(std::unique_ptr<PhysicalMapping> physicalMapping,
         transaction);
     numBytesPerFixedSizedValue = getDataTypeSizeInChunk(this->dataType);
     assert(numBytesPerFixedSizedValue <= BufferPoolConstants::PAGE_4KB_SIZE);
-    numValuesPerPage =
-        numBytesPerFixedSizedValue == 0 ?
-            0 :
-            PageUtils::getNumElementsInAPage(numBytesPerFixedSizedValue, false /* hasNull */);
     if (requireNullColumn) {
         nullColumn = std::make_unique<NullNodeColumn>(
             metaDAHeaderInfo.nullDAHPageIdx, dataFH, metadataFH, bufferManager, wal, transaction);
@@ -43,11 +39,12 @@ void NodeColumn::batchLookup(
     for (auto i = 0u; i < size; ++i) {
         auto nodeOffset = nodeOffsets[i];
         auto nodeGroupIdx = StorageUtils::getNodeGroupIdx(nodeOffset);
-        auto cursor = PageUtils::getPageElementCursorForPos(nodeOffset, numValuesPerPage);
-        cursor.pageIdx += metadataDA->get(nodeGroupIdx, transaction->getType()).pageIdx;
+        auto chunkMeta = metadataDA->get(nodeGroupIdx, transaction->getType());
+        auto cursor = PageUtils::getPageElementCursorForPos(nodeOffset, chunkMeta.numValuesPerPage);
+        cursor.pageIdx += chunkMeta.pageIdx;
         readFromPage(transaction, cursor.pageIdx, [&](uint8_t* frame) -> void {
-            physicalMapping->getValue(frame, cursor.elemPosInPage, result + i * numBytesPerFixedSizedValue,
-                numBytesPerFixedSizedValue);
+            physicalMapping->getValue(frame, cursor.elemPosInPage,
+                result + i * numBytesPerFixedSizedValue, numBytesPerFixedSizedValue);
         });
     }
 }
@@ -57,8 +54,9 @@ void BoolNodeColumn::batchLookup(
     for (auto i = 0u; i < size; ++i) {
         auto nodeOffset = nodeOffsets[i];
         auto nodeGroupIdx = StorageUtils::getNodeGroupIdx(nodeOffset);
-        auto cursor = PageUtils::getPageElementCursorForPos(nodeOffset, numValuesPerPage);
-        cursor.pageIdx += metadataDA->get(nodeGroupIdx, transaction->getType()).pageIdx;
+        auto chunkMeta = metadataDA->get(nodeGroupIdx, transaction->getType());
+        auto cursor = PageUtils::getPageElementCursorForPos(nodeOffset, chunkMeta.numValuesPerPage);
+        cursor.pageIdx += chunkMeta.pageIdx;
         readFromPage(transaction, cursor.pageIdx, [&](uint8_t* frame) -> void {
             // De-compress bitpacked bools
             result[i] = NullMask::isNull((uint64_t*)frame, cursor.elemPosInPage);
@@ -79,11 +77,13 @@ void NodeColumn::scan(transaction::Transaction* transaction, node_group_idx_t no
         nullColumn->scan(transaction, nodeGroupIdx, startOffsetInGroup, endOffsetInGroup,
             resultVector, offsetInVector);
     }
-    auto pageCursor = PageUtils::getPageElementCursorForPos(startOffsetInGroup, numValuesPerPage);
     auto chunkMeta = metadataDA->get(nodeGroupIdx, transaction->getType());
+    auto pageCursor =
+        PageUtils::getPageElementCursorForPos(startOffsetInGroup, chunkMeta.numValuesPerPage);
     pageCursor.pageIdx += chunkMeta.pageIdx;
     auto numValuesToScan = endOffsetInGroup - startOffsetInGroup;
-    scanUnfiltered(transaction, pageCursor, numValuesToScan, resultVector, offsetInVector);
+    scanUnfiltered(transaction, pageCursor, numValuesToScan, resultVector,
+        chunkMeta.numValuesPerPage, offsetInVector);
 }
 
 void NodeColumn::scan(node_group_idx_t nodeGroupIdx, ColumnChunk* columnChunk) {
@@ -104,21 +104,27 @@ void NodeColumn::scanInternal(
     auto nodeGroupIdx = StorageUtils::getNodeGroupIdx(startNodeOffset);
     auto offsetInNodeGroup =
         startNodeOffset - StorageUtils::getStartOffsetOfNodeGroup(nodeGroupIdx);
-    auto pageCursor = PageUtils::getPageElementCursorForPos(offsetInNodeGroup, numValuesPerPage);
     auto chunkMeta = metadataDA->get(nodeGroupIdx, transaction->getType());
+    auto pageCursor =
+        PageUtils::getPageElementCursorForPos(offsetInNodeGroup, chunkMeta.numValuesPerPage);
     pageCursor.pageIdx += chunkMeta.pageIdx;
     if (nodeIDVector->state->selVector->isUnfiltered()) {
-        scanUnfiltered(
-            transaction, pageCursor, nodeIDVector->state->selVector->selectedSize, resultVector);
+        scanUnfiltered(transaction, pageCursor, nodeIDVector->state->selVector->selectedSize,
+            resultVector, chunkMeta.numValuesPerPage);
     } else {
-        scanFiltered(transaction, pageCursor, nodeIDVector, resultVector);
+        scanFiltered(
+            transaction, pageCursor, nodeIDVector, resultVector, chunkMeta.numValuesPerPage);
     }
 }
 
 void NodeColumn::scanUnfiltered(Transaction* transaction, PageElementCursor& pageCursor,
-    uint64_t numValuesToScan, ValueVector* resultVector, uint64_t startPosInVector) {
+    uint64_t numValuesToScan, ValueVector* resultVector, uint64_t numValuesPerPage,
+    uint64_t startPosInVector) {
     uint64_t numValuesScanned = 0;
     while (numValuesScanned < numValuesToScan) {
+        // This won't work with compressed data. We need a new way of accessing the values
+        // Really all we need is to have readValuesFromPage return the number of values found in
+        // that page.
         uint64_t numValuesToScanInPage =
             std::min((uint64_t)numValuesPerPage - pageCursor.elemPosInPage,
                 numValuesToScan - numValuesScanned);
@@ -132,7 +138,7 @@ void NodeColumn::scanUnfiltered(Transaction* transaction, PageElementCursor& pag
 }
 
 void NodeColumn::scanFiltered(Transaction* transaction, PageElementCursor& pageCursor,
-    ValueVector* nodeIDVector, ValueVector* resultVector) {
+    ValueVector* nodeIDVector, ValueVector* resultVector, uint64_t numValuesPerPage) {
     auto numValuesToScan = nodeIDVector->state->getOriginalSize();
     auto numValuesScanned = 0u;
     auto posInSelVector = 0u;
@@ -179,8 +185,9 @@ void NodeColumn::lookupInternal(
 void NodeColumn::lookupValue(transaction::Transaction* transaction, offset_t nodeOffset,
     ValueVector* resultVector, uint32_t posInVector) {
     auto nodeGroupIdx = StorageUtils::getNodeGroupIdx(nodeOffset);
-    auto pageCursor = PageUtils::getPageElementCursorForPos(nodeOffset, numValuesPerPage);
-    pageCursor.pageIdx += metadataDA->get(nodeGroupIdx, transaction->getType()).pageIdx;
+    auto chunkMeta = metadataDA->get(nodeGroupIdx, transaction->getType());
+    auto pageCursor = PageUtils::getPageElementCursorForPos(nodeOffset, chunkMeta.numValuesPerPage);
+    pageCursor.pageIdx += chunkMeta.pageIdx;
     readFromPage(transaction, pageCursor.pageIdx, [&](uint8_t* frame) -> void {
         physicalMapping->readValuesFromPage(
             frame, pageCursor, resultVector, posInVector, 1 /* numValuesToRead */);
@@ -199,12 +206,11 @@ page_idx_t NodeColumn::append(
     ColumnChunk* columnChunk, page_idx_t startPageIdx, uint64_t nodeGroupIdx) {
     // Main column chunk.
     page_idx_t numPagesFlushed = 0;
-    auto numPagesForChunk = columnChunk->flushBuffer(dataFH, startPageIdx);
-    ColumnChunkMetadata metadata{startPageIdx, numPagesForChunk, columnChunk->getNumValues()};
+    auto metadata = columnChunk->flushBuffer(dataFH, startPageIdx);
     metadataDA->resize(nodeGroupIdx + 1);
     metadataDA->update(nodeGroupIdx, metadata);
-    numPagesFlushed += numPagesForChunk;
-    startPageIdx += numPagesForChunk;
+    numPagesFlushed += metadata.numPages;
+    startPageIdx += metadata.numPages;
     // Null column chunk.
     auto numPagesForNullChunk =
         nullColumn->append(columnChunk->getNullChunk(), startPageIdx, nodeGroupIdx);
@@ -275,9 +281,11 @@ void NodeColumn::writeValue(
 
 WALPageIdxPosInPageAndFrame NodeColumn::createWALVersionOfPageForValue(offset_t nodeOffset) {
     auto nodeGroupIdx = StorageUtils::getNodeGroupIdx(nodeOffset);
+    auto chunkMeta = metadataDA->get(nodeGroupIdx, TransactionType::WRITE);
     auto originalPageCursor = PageUtils::getPageElementCursorForPos(
-        nodeOffset - StorageUtils::getStartOffsetOfNodeGroup(nodeGroupIdx), numValuesPerPage);
-    originalPageCursor.pageIdx += metadataDA->get(nodeGroupIdx, TransactionType::WRITE).pageIdx;
+        nodeOffset - StorageUtils::getStartOffsetOfNodeGroup(nodeGroupIdx),
+        chunkMeta.numValuesPerPage);
+    originalPageCursor.pageIdx += chunkMeta.pageIdx;
     bool insertingNewPage = false;
     if (originalPageCursor.pageIdx >= dataFH->getNumPages()) {
         assert(originalPageCursor.pageIdx == dataFH->getNumPages());
@@ -338,18 +346,12 @@ BoolNodeColumn::BoolNodeColumn(const MetadataDAHInfo& metaDAHeaderInfo, BMFileHa
     bool requireNullColumn)
     : NodeColumn{std::make_unique<CompressedMapping>(std::make_unique<BoolCompression>()),
           metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction,
-          requireNullColumn} {
-    // 8 values per byte (on-disk)
-    numValuesPerPage = PageUtils::getNumElementsInAPage(1, false /*requireNullColumn*/) * 8;
-}
+          requireNullColumn} {}
 
 NullNodeColumn::NullNodeColumn(page_idx_t metaDAHPageIdx, BMFileHandle* dataFH,
     BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal, Transaction* transaction)
     : NodeColumn{std::make_unique<NullMapping>(), MetadataDAHInfo{metaDAHPageIdx}, dataFH,
-          metadataFH, bufferManager, wal, transaction, false /*requireNullColumn*/} {
-    // 8 values per byte
-    numValuesPerPage = PageUtils::getNumElementsInAPage(1, false /*requireNullColumn*/) * 8;
-}
+          metadataFH, bufferManager, wal, transaction, false /*requireNullColumn*/} {}
 
 void NullNodeColumn::scan(
     Transaction* transaction, ValueVector* nodeIDVector, ValueVector* resultVector) {
@@ -363,11 +365,10 @@ void NullNodeColumn::lookup(
 
 page_idx_t NullNodeColumn::append(
     ColumnChunk* columnChunk, page_idx_t startPageIdx, uint64_t nodeGroupIdx) {
-    auto numPagesFlushed = columnChunk->flushBuffer(dataFH, startPageIdx);
+    auto metadata = columnChunk->flushBuffer(dataFH, startPageIdx);
     metadataDA->resize(nodeGroupIdx + 1);
-    metadataDA->update(nodeGroupIdx,
-        ColumnChunkMetadata{startPageIdx, numPagesFlushed, columnChunk->getNumValues()});
-    return numPagesFlushed;
+    metadataDA->update(nodeGroupIdx, metadata);
+    return metadata.numPages;
 }
 
 void NullNodeColumn::setNull(offset_t nodeOffset) {

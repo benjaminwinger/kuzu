@@ -325,10 +325,17 @@ page_idx_t ColumnChunk::getNumPages() const {
     return numPagesToFlush;
 }
 
-page_idx_t ColumnChunk::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx) {
+ColumnChunkMetadata ColumnChunk::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx) {
     FileUtils::writeToFile(dataFH->getFileInfo(), buffer.get(), bufferSize,
         startPageIdx * BufferPoolConstants::PAGE_4KB_SIZE);
-    return getNumPagesForBuffer();
+    auto numValuesPerPage = BufferPoolConstants::PAGE_4KB_SIZE / getDataTypeSizeInChunk(dataType);
+    return ColumnChunkMetadata(startPageIdx, getNumPagesForBuffer(), numValues, numValuesPerPage);
+}
+
+ColumnChunkMetadata BoolColumnChunk::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx) {
+    auto chunkMeta = ColumnChunk::flushBuffer(dataFH, startPageIdx);
+    chunkMeta.numValuesPerPage = BufferPoolConstants::PAGE_4KB_SIZE * 8;
+    return chunkMeta;
 }
 
 uint32_t ColumnChunk::getDataTypeSizeInChunk(LogicalType& dataType) {
@@ -590,13 +597,21 @@ CompressedColumnChunk::CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg
     common::CopyDescription* copyDescription, bool hasNullChunk)
     : ColumnChunk(alg->logicalType(), copyDescription, hasNullChunk) {}
 
-page_idx_t CompressedColumnChunk::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx) {
-    auto compressedSize = alg->numBytesForCompression(buffer.get(), numValues);
-    auto compressedBuffer = std::make_unique<uint8_t>(compressedSize);
-    alg->compress(buffer.get(), numValues, compressedBuffer.get(), compressedSize);
-    FileUtils::writeToFile(dataFH->getFileInfo(), compressedBuffer.get(), bufferSize,
-        startPageIdx * BufferPoolConstants::PAGE_4KB_SIZE);
-    return getNumPagesForBytes(compressedSize);
+ColumnChunkMetadata CompressedColumnChunk::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx) {
+    auto valuesRemaining = numValues;
+    const uint8_t* bufferStart = buffer.get();
+    auto compressedBuffer = std::make_unique<uint8_t>(BufferPoolConstants::PAGE_4KB_SIZE);
+    auto numPages = 0;
+    auto numValuesPerPage = alg->startCompression(buffer.get(), numValues, BufferPoolConstants::PAGE_4KB_SIZE);
+    while (valuesRemaining > 0) {
+        auto compressedSize = alg->compressNextPage(bufferStart, valuesRemaining,
+            compressedBuffer.get(), BufferPoolConstants::PAGE_4KB_SIZE);
+        valuesRemaining -= numValuesPerPage;
+        FileUtils::writeToFile(dataFH->getFileInfo(), compressedBuffer.get(), compressedSize,
+            (startPageIdx + numPages) * BufferPoolConstants::PAGE_4KB_SIZE);
+        numPages++;
+    }
+    return ColumnChunkMetadata(startPageIdx, numPages, numValues, numValuesPerPage);
 }
 
 } // namespace storage

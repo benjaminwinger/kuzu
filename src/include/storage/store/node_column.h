@@ -70,9 +70,11 @@ protected:
     virtual void scanInternal(transaction::Transaction* transaction,
         common::ValueVector* nodeIDVector, common::ValueVector* resultVector);
     void scanUnfiltered(transaction::Transaction* transaction, PageElementCursor& pageCursor,
-        uint64_t numValuesToScan, common::ValueVector* resultVector, uint64_t startPosInVector = 0);
+        uint64_t numValuesToScan, common::ValueVector* resultVector, uint64_t numValuesPerPage,
+        uint64_t startPosInVector = 0);
     void scanFiltered(transaction::Transaction* transaction, PageElementCursor& pageCursor,
-        common::ValueVector* nodeIDVector, common::ValueVector* resultVector);
+        common::ValueVector* nodeIDVector, common::ValueVector* resultVector,
+        uint64_t numValuesPerPage);
     virtual void lookupInternal(transaction::Transaction* transaction,
         common::ValueVector* nodeIDVector, common::ValueVector* resultVector);
     virtual void lookupValue(transaction::Transaction* transaction, common::offset_t nodeOffset,
@@ -99,7 +101,6 @@ protected:
     StorageStructureID storageStructureID;
     common::LogicalType dataType;
     uint32_t numBytesPerFixedSizedValue;
-    uint32_t numValuesPerPage;
     BMFileHandle* dataFH;
     BMFileHandle* metadataFH;
     BufferManager* bufferManager;

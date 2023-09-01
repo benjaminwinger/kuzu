@@ -86,15 +86,36 @@ public:
     virtual inline void getValue(
         const uint8_t* buffer, common::offset_t pos, uint8_t* dst) const = 0;
 
+    // TODO: this should probably be scoped. E.g. by having a separate class for handling
+    // compression which is returned by the compress function. Called when compression starts. Will
+    // always be called before compressNextPage
+    // Returns the number of values per page (currently this must be constant)
+    virtual uint64_t startCompression(
+        const uint8_t* srcBuffer, uint64_t numValues, uint64_t pageSize) = 0;
+
     // Takes uncompressed data from the srcBuffer and compresses it into the dstBuffer
-    // The dstBufferSize is the size returned by numBytesForCompression.
-    virtual void compress(const uint8_t* srcBuffer, uint64_t numValues, uint8_t* dstBuffer,
-        uint64_t dstBufferSize) = 0;
+    //
+    // stores only as much data in dstBuffer as will fit, and advances the srcBuffer pointer
+    // to the beginning of the next value to store.
+    // (This means that we can't start the next page on an unaligned value.
+    // Maybe instead we could use value offsets, but the compression algorithms
+    // usually work on aligned chunks anyway)
+    //
+    // dstBufferSize is the size in bytes
+    // numValuesRemaining is the number of values remaining in the srcBuffer to be compressed.
+    //      compressNextPage must store the least of either the number of values per page
+    //      (as returned by startCompression), or the remaining number of values.
+    //
+    // returns the size in bytes of the compressed data within the page (rounded up to the nearest
+    // byte)
+    virtual uint64_t compressNextPage(const uint8_t*& srcBuffer, uint64_t numValuesRemaining,
+        uint8_t* dstBuffer, uint64_t dstBufferSize) = 0;
 
     // Takes compressed data from the srcBuffer and decompresses it into the dstBuffer
     // Offsets refer to value offsets, not byte offsets
-    virtual void decompress(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
-        uint64_t dstOffset, uint64_t numValues) = 0;
+    // srcBuffer points to the beginning of a page
+    virtual void decompressFromPage(const uint8_t* srcBuffer, uint64_t srcOffset,
+        uint8_t* dstBuffer, uint64_t dstOffset, uint64_t numValues) = 0;
 
     // virtual uint64_t numBytesForValues(common::offset_t numValues) const = 0;
     virtual uint64_t numBytesForCompression(
@@ -119,13 +140,22 @@ public:
         memcpy(dst, buffer + pos * numBytesPerValue, numBytesPerValue);
     }
 
-    inline void compress(const uint8_t* srcBuffer, uint64_t numValues, uint8_t* dstBuffer,
-        uint64_t dstBufferSize) override {
-        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType());
-        std::memcpy(dstBuffer, srcBuffer, numValues * numBytesPerValue);
+    uint64_t startCompression(
+        const uint8_t* srcBuffer, uint64_t numValues, uint64_t pageSize) override {
+        return pageSize / getDataTypeSizeInChunk(logicalType());
     }
 
-    inline void decompress(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
+    inline uint64_t compressNextPage(const uint8_t*& srcBuffer, uint64_t numValuesRemaining,
+        uint8_t* dstBuffer, uint64_t dstBufferSize) override {
+        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType());
+        auto numValues = std::min(numValuesRemaining, dstBufferSize / numBytesPerValue);
+        auto sizeToCopy = numValues * numBytesPerValue;
+        std::memcpy(dstBuffer, srcBuffer, sizeToCopy);
+        srcBuffer += sizeToCopy;
+        return sizeToCopy;
+    }
+
+    inline void decompressFromPage(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
         uint64_t dstOffset, uint64_t numValues) override {
         auto numBytesPerValue = getDataTypeSizeInChunk(logicalType());
         std::memcpy(dstBuffer + dstOffset * numBytesPerValue,
@@ -189,10 +219,22 @@ public:
         }
     }
 
-    void compress(const uint8_t* srcBuffer, uint64_t numValues, uint8_t* dstBuffer,
-        uint64_t dstBufferSize) final;
+    uint64_t numValuesPerPage(uint8_t bitWidth, uint64_t pageSize) {
+        return (pageSize - 1) * 8 / bitWidth;
+    }
 
-    void decompress(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
+    uint64_t startCompression(
+        const uint8_t* srcBuffer, uint64_t numValues, uint64_t pageSize) override {
+        auto result = getBitWidth(srcBuffer, numValues);
+        bitWidth = result.first;
+        hasNegative = result.second;
+        return numValuesPerPage(bitWidth, pageSize);
+    }
+
+    uint64_t compressNextPage(const uint8_t*& srcBuffer, uint64_t numValuesRemaining,
+        uint8_t* dstBuffer, uint64_t dstBufferSize) final;
+
+    void decompressFromPage(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
         uint64_t dstOffset, uint64_t numValues) final;
 
     // TODO(bmwinger): maybe store the calculated bit width and whether or not there are
@@ -206,6 +248,8 @@ public:
 
 protected:
     common::LogicalType mLogicalType;
+    uint8_t bitWidth;
+    bool hasNegative;
 };
 
 class BoolCompression : public CompressionAlg {
@@ -223,15 +267,23 @@ public:
         *dst = common::NullMask::isNull((uint64_t*)buffer, pos);
     }
 
-    void compress(const uint8_t* srcBuffer, uint64_t numValues, uint8_t* dstBuffer,
-        uint64_t dstBufferSize) final {
+    uint64_t startCompression(
+        const uint8_t* srcBuffer, uint64_t numValues, uint64_t pageSize) override {
+        return pageSize * 8;
+    }
+    uint64_t compressNextPage(const uint8_t*& srcBuffer, uint64_t numValuesRemaining,
+        uint8_t* dstBuffer, uint64_t dstBufferSize) final {
         // TODO(bmwinger): Optimize, e.g. using an integer bitpacking function
+        auto numValues = std::min(numValuesRemaining, dstBufferSize * 8);
         for (auto i = 0ull; i < numValues; i++) {
             common::NullMask::setNull((uint64_t*)dstBuffer, i, srcBuffer[i]);
         }
+        srcBuffer += numValues / 8;
+        // Will be a multiple of 8 except for the last iteration
+        return numValues / 8 + (bool)(numValues % 8);
     }
 
-    void decompress(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
+    void decompressFromPage(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
         uint64_t dstOffset, uint64_t numValues) final {
         // TODO(bmwinger): Optimize, e.g. using an integer bitpacking function
         for (auto i = 0ull; i < numValues; i++) {
@@ -270,7 +322,7 @@ public:
     void readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
         common::ValueVector* resultVector, uint32_t posInVector,
         uint32_t numValuesToRead) override {
-        alg->decompress(
+        alg->decompressFromPage(
             frame, pageCursor.elemPosInPage, resultVector->getData(), posInVector, numValuesToRead);
     }
     void writeValueToPage(uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector,

@@ -29,11 +29,12 @@ struct BaseColumnChunkMetadata {
 
 struct ColumnChunkMetadata : public BaseColumnChunkMetadata {
     uint64_t numValues;
+    uint64_t numValuesPerPage;
 
     ColumnChunkMetadata() : BaseColumnChunkMetadata(), numValues{UINT64_MAX} {}
     ColumnChunkMetadata(
-        common::page_idx_t pageIdx, common::page_idx_t numPages, uint64_t numNodesInChunk)
-        : BaseColumnChunkMetadata{pageIdx, numPages}, numValues(numNodesInChunk) {}
+        common::page_idx_t pageIdx, common::page_idx_t numPages, uint64_t numNodesInChunk, uint64_t numValuesPerPage)
+        : BaseColumnChunkMetadata{pageIdx, numPages}, numValues(numNodesInChunk), numValuesPerPage(numValuesPerPage) {}
 };
 
 struct OverflowColumnChunkMetadata : public BaseColumnChunkMetadata {
@@ -90,7 +91,7 @@ public:
     virtual void append(
         arrow::Array* array, common::offset_t startPosInChunk, uint32_t numValuesToAppend);
 
-    virtual common::page_idx_t flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx);
+    virtual ColumnChunkMetadata flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx);
 
     // Returns the size of the data type in bytes
     static uint32_t getDataTypeSizeInChunk(common::LogicalType& dataType);
@@ -179,7 +180,7 @@ class CompressedColumnChunk : public ColumnChunk {
 public:
     explicit CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg,
             common::CopyDescription *copyDescription, bool hasNullChunk = true);
-    common::page_idx_t flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx) final;
+    ColumnChunkMetadata flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx) final;
 protected:
     std::unique_ptr<CompressionAlg> alg;
 };
@@ -200,6 +201,8 @@ public:
         common::offset_t startPosInChunk, uint32_t numValuesToAppend) final;
 
     void resize(uint64_t capacity) final;
+
+    ColumnChunkMetadata flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx) final;
 
 protected:
     inline uint64_t numBytesForValues(common::offset_t numValues) const {

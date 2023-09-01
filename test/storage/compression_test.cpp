@@ -9,14 +9,19 @@ template<typename T>
 void test_compression(CompressionAlg& alg, std::vector<T> src) {
     auto compressedSize = alg.numBytesForCompression((uint8_t*)src.data(), src.size());
     std::vector<uint8_t> dest(compressedSize);
-    alg.compress((uint8_t*)src.data(), src.size(), dest.data(), compressedSize);
+    alg.startCompression((uint8_t*)src.data(), src.size(), src.size() * sizeof(T));
+    auto numValuesRemaining = src.size();
+    // For simplicity, we'll ignore the possibility of it requiring multiple pages
+    // TODO(bmwinger): Test reading/writing from multiple pages
+    const uint8_t *srcCursor = (uint8_t*)src.data();
+    alg.compressNextPage(srcCursor, numValuesRemaining, dest.data(), compressedSize);
     std::vector<T> decompressed(src.size());
-    alg.decompress(dest.data(), 0, (uint8_t*)decompressed.data(), 0, src.size());
+    alg.decompressFromPage(dest.data(), 0, (uint8_t*)decompressed.data(), 0, src.size());
     ASSERT_EQ(src, decompressed);
     // works with all bit widths
     T value = 0;
     alg.setValueFromUncompressed((uint8_t*)&value, 0, (uint8_t*)dest.data(), 1);
-    alg.decompress(dest.data(), 0, (uint8_t*)decompressed.data(), 0, src.size());
+    alg.decompressFromPage(dest.data(), 0, (uint8_t*)decompressed.data(), 0, src.size());
     src[1] = value;
     ASSERT_EQ(decompressed, src);
     ASSERT_EQ(decompressed[1], value);
