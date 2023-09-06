@@ -178,7 +178,7 @@ inline bool ColumnChunk::getValue(common::offset_t pos) const {
 // Column chunk which is compressed during flushBuffer, but otherwise maintained uncompressed
 class CompressedColumnChunk : public ColumnChunk {
 public:
-    explicit CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg,
+    explicit CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg, common::LogicalType dataType,
             common::CopyDescription *copyDescription, bool hasNullChunk = true);
     ColumnChunkMetadata flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx) final;
 protected:

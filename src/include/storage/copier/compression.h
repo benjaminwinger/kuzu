@@ -74,7 +74,6 @@ inline uint32_t getDataTypeSizeInChunk(const common::LogicalType& dataType) {
 class CompressionAlg {
 public:
     virtual ~CompressionAlg() = default;
-    virtual inline const common::LogicalType& logicalType() const = 0;
 
     // Takes a single uncompressed value from the srcBuffer and compresses it into the dstBuffer
     // Offsets refer to value offsets, not byte offsets
@@ -125,29 +124,31 @@ public:
 // Compression alg which does not compress values and instead just copies them.
 class CopyCompression : public CompressionAlg {
 public:
-    CopyCompression(const common::LogicalType& logicalType) : mLogicalType{logicalType} {}
-    const common::LogicalType& logicalType() const override { return mLogicalType; }
+    explicit CopyCompression(const common::LogicalType& logicalType) : logicalType{logicalType} {}
 
     void setValueFromUncompressed(uint8_t* srcBuffer, common::offset_t posInSrc, uint8_t* dstBuffer,
         common::offset_t posInDst) final {
-        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType());
+        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType);
         memcpy(dstBuffer + posInDst * numBytesPerValue, srcBuffer + posInSrc * numBytesPerValue,
             numBytesPerValue);
     }
 
     inline void getValue(const uint8_t* buffer, common::offset_t pos, uint8_t* dst) const override {
-        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType());
+        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType);
         memcpy(dst, buffer + pos * numBytesPerValue, numBytesPerValue);
     }
 
     uint64_t startCompression(
         const uint8_t* srcBuffer, uint64_t numValues, uint64_t pageSize) override {
-        return pageSize / getDataTypeSizeInChunk(logicalType());
+        auto numBytesPerFixedSizedValue = getDataTypeSizeInChunk(logicalType);
+        return numBytesPerFixedSizedValue == 0 ?
+                   0 :
+                   PageUtils::getNumElementsInAPage(numBytesPerFixedSizedValue, false /*hasNull */);
     }
 
     inline uint64_t compressNextPage(const uint8_t*& srcBuffer, uint64_t numValuesRemaining,
         uint8_t* dstBuffer, uint64_t dstBufferSize) override {
-        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType());
+        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType);
         auto numValues = std::min(numValuesRemaining, dstBufferSize / numBytesPerValue);
         auto sizeToCopy = numValues * numBytesPerValue;
         std::memcpy(dstBuffer, srcBuffer, sizeToCopy);
@@ -157,18 +158,18 @@ public:
 
     inline void decompressFromPage(const uint8_t* srcBuffer, uint64_t srcOffset, uint8_t* dstBuffer,
         uint64_t dstOffset, uint64_t numValues) override {
-        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType());
+        auto numBytesPerValue = getDataTypeSizeInChunk(logicalType);
         std::memcpy(dstBuffer + dstOffset * numBytesPerValue,
             srcBuffer + srcOffset * numBytesPerValue, numValues * numBytesPerValue);
     }
 
     uint64_t numBytesForCompression(
         const uint8_t* srcBuffer, common::offset_t numValues) const final {
-        return getDataTypeSizeInChunk(logicalType()) * numValues;
+        return getDataTypeSizeInChunk(logicalType) * numValues;
     }
 
 protected:
-    common::LogicalType mLogicalType;
+    common::LogicalType logicalType;
 };
 
 template<typename T>
@@ -191,7 +192,7 @@ class IntegerBitpacking : public CompressionAlg {
     static const common::LogicalType LOGICAL_TYPE;
 
 public:
-    const common::LogicalType& logicalType() const override { return LOGICAL_TYPE; }
+    IntegerBitpacking() = default;
 
     void setValueFromUncompressed(uint8_t* srcBuffer, common::offset_t posInSrc, uint8_t* dstBuffer,
         common::offset_t posInDst) final;
@@ -228,7 +229,7 @@ public:
         auto result = getBitWidth(srcBuffer, numValues);
         bitWidth = result.first;
         hasNegative = result.second;
-        return numValuesPerPage(bitWidth, pageSize);
+        return bitWidth == 0 ? std::numeric_limits<uint64_t>::max() : numValuesPerPage(bitWidth, pageSize);
     }
 
     uint64_t compressNextPage(const uint8_t*& srcBuffer, uint64_t numValuesRemaining,
@@ -256,7 +257,6 @@ class BoolCompression : public CompressionAlg {
     static const common::LogicalType LOGICAL_TYPE;
 
 public:
-    inline const common::LogicalType& logicalType() const final { return LOGICAL_TYPE; }
     void setValueFromUncompressed(uint8_t* srcBuffer, common::offset_t posInSrc, uint8_t* dstBuffer,
         common::offset_t posInDst) final {
         auto val = ((bool*)srcBuffer)[posInSrc];
@@ -316,8 +316,11 @@ public:
 
 class CompressedMapping : public PhysicalMapping {
 public:
-    inline const common::LogicalType& logicalType() const final { return alg->logicalType(); }
-    explicit CompressedMapping(std::unique_ptr<CompressionAlg> alg) : alg{std::move(alg)} {}
+    explicit CompressedMapping(
+        const common::LogicalType& logicalType, std::unique_ptr<CompressionAlg> alg)
+        : mLogicalType{logicalType}, alg{std::move(alg)} {}
+
+    inline const common::LogicalType& logicalType() const { return mLogicalType; }
 
     void readValuesFromPage(uint8_t* frame, PageElementCursor& pageCursor,
         common::ValueVector* resultVector, uint32_t posInVector,
@@ -335,7 +338,9 @@ public:
         alg->getValue(frame, posInFrame, result);
     }
 
+protected:
     std::unique_ptr<CompressionAlg> alg;
+    common::LogicalType mLogicalType;
 };
 
 // Mapping for nulls where the values are bitpacked both in-memory and on-disk
@@ -373,7 +378,7 @@ public:
     explicit FixedValueMapping(const common::LogicalType& logicalType)
         : mLogicalType{logicalType} {}
 
-    inline const common::LogicalType& logicalType() const final { return mLogicalType; }
+    inline const common::LogicalType& logicalType() const { return mLogicalType; }
 
     void writeValueToPage(uint8_t* frame, uint16_t posInFrame, common::ValueVector* vector,
         uint32_t posInVector) override {
@@ -429,6 +434,48 @@ public:
         memcpy(
             result, frame + (posInFrame * numBytesPerFixedSizedValue), numBytesPerFixedSizedValue);
     }
+};
+
+// Compression type is written to the data header both so we can usually catch issues when we
+// decompress uncompressed data by mistake, and to allow for runtime-configurable compression in
+// future.
+enum class CompressionType : uint8_t {
+    // TODO: Actually use for copy
+    COPY = 1,
+    INTEGER_BITPACKING = 2,
+};
+
+// Six bits are needed for the bit width (fewer for smaller types, but the header byte is the same
+// for simplicity) One bit (the eighth) is needed to indicate if there are negative values The
+// seventh bit is unused
+struct BitpackHeader {
+    uint8_t bitWidth;
+    bool hasNegative;
+
+    // Writes the header to the buffer and advances the buffer pointer to the end of the header
+    void writeHeader(uint8_t*& buffer) const {
+        *(buffer++) = static_cast<uint8_t>(CompressionType::INTEGER_BITPACKING);
+        *buffer = bitWidth;
+        *buffer |= hasNegative << 7;
+        buffer++;
+    }
+
+    // Reads the header from the buffer and advances the buffer pointer to the end of the header
+    static BitpackHeader readHeader(const uint8_t*& data) {
+        if (static_cast<CompressionType>(data[0]) != CompressionType::INTEGER_BITPACKING) {
+            throw common::StorageException("Trying to read bitpacked integer data but the data is "
+                                           "not marked as using bitpacking");
+        }
+        data++;
+        BitpackHeader header;
+        header.bitWidth = *data & 0b1111111;
+        header.hasNegative = *data & 0b10000000;
+        data++;
+        return header;
+    }
+
+    // Size of the header in bytes
+    static uint32_t size() { return 2; }
 };
 
 } // namespace storage

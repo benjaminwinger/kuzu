@@ -5,6 +5,7 @@
 #include "common/vector/value_vector.h"
 #include "fastpfor/bitpackinghelpers.h"
 #include "oroch/bitpck.h"
+#include "common/exception.h"
 
 using namespace kuzu::common;
 namespace arrow {
@@ -24,31 +25,10 @@ template<>
 const LogicalType IntegerBitpacking<int64_t, uint64_t>::LOGICAL_TYPE = LogicalType(
     LogicalTypeID::INT64);
 
-// Six bits are needed for the bit width (fewer for smaller types, but the header byte is the same
-// for simplicity) One bit (the eighth) is needed to indicate if there are negative values The
-// seventh bit is unused
-struct BitpackHeader {
-    uint8_t bitWidth;
-    bool hasNegative;
-
-    uint8_t getHeaderByte() const {
-        uint8_t result = bitWidth;
-        result |= hasNegative << 7;
-        return result;
-    }
-
-    static BitpackHeader readHeaderByte(uint8_t headerByte) {
-        BitpackHeader header;
-        header.bitWidth = headerByte & 0b1111111;
-        header.hasNegative = headerByte & 0b10000000;
-        return header;
-    }
-};
-
 template<typename T, typename U>
 void IntegerBitpacking<T, U>::setValueFromUncompressed(
     uint8_t* srcBuffer, common::offset_t posInSrc, uint8_t* dstBuffer, common::offset_t posInDst) {
-    auto header = BitpackHeader::readHeaderByte(dstBuffer++[0]);
+    auto header = BitpackHeader::readHeader((const uint8_t*&)dstBuffer);
     // This is a fairly naive implementation which uses fastunpack/fastpack
     // to modify the data by decompressing/compressing a single chunk of values.
     //
@@ -84,7 +64,7 @@ void IntegerBitpacking<T, U>::setValueFromUncompressed(
 template<typename T, typename U>
 void IntegerBitpacking<T, U>::getValue(
     const uint8_t* buffer, common::offset_t pos, uint8_t* dst) const {
-    auto header = BitpackHeader::readHeaderByte(buffer++[0]);
+    auto header = BitpackHeader::readHeader(buffer);
     // TODO(bmwinger): optimize as in setValueFromUncompressed
     auto chunkIndex = pos / 32;
     auto posInChunk = pos % 32;
@@ -99,28 +79,37 @@ void IntegerBitpacking<T, U>::getValue(
 template<typename T, typename U>
 uint64_t IntegerBitpacking<T, U>::compressNextPage(
     const uint8_t* &srcBuffer, uint64_t numValuesRemaining, uint8_t* dstBuffer, uint64_t dstBufferSize) {
-    dstBuffer++[0] = BitpackHeader(bitWidth, hasNegative).getHeaderByte();
+    BitpackHeader(bitWidth, hasNegative).writeHeader(dstBuffer);
 
-    auto numValues = std::min(numValuesRemaining, numValuesPerPage(dstBufferSize, bitWidth));
+    if (bitWidth == 0) {
+        return BitpackHeader::size();
+    }
+    auto numValues = std::min(numValuesRemaining, numValuesPerPage(bitWidth, dstBufferSize));
     // Round down to nearest multiple of 32 to ensure that we don't write any extra values
     // Rounding up could overflow the buffer
     numValues -= numValues % 32;
     assert(dstBufferSize >= 32);
+    // Note that this differs from the returned size, as the buffer needs to be large enough
+    // to not overflow if the number of values is not a multiple of 32
+    assert(dstBufferSize > bitWidth * 4 * (numValues/32));
     for (auto i = 0ull; i < numValues; i += 32) {
         FastPForLib::fastpack((const U*)srcBuffer + i, (uint32_t*)dstBuffer, bitWidth);
         // fastpack packs 32 values at a time, i.e. 4 bytes per bit of width.
         dstBuffer += bitWidth * 4;
     }
-    return numValues * bitWidth / 8;
+    return BitpackHeader::size() + numValues * bitWidth / 8;
 }
 
 template<typename T, typename U>
 void IntegerBitpacking<T, U>::decompressFromPage(const uint8_t* srcBuffer, uint64_t srcOffset,
     uint8_t* dstBuffer, uint64_t dstOffset, uint64_t numValues) {
-    auto header = BitpackHeader::readHeaderByte(srcBuffer++[0]);
+    auto header = BitpackHeader::readHeader(srcBuffer);
     auto chunkSize = 32;
-    assert(numValues >= chunkSize);
     // FIXME(bmwinger): will overflow data with fewer than 32 values
+    // assert(numValues >= chunkSize);
+    // But most of the time, the buffers are large enough.
+    // But we should either fix overflows via a slow unpack on the last chunk that works on 
+    // an arbitrary number of values, or assert that the buffers are indeed large enough if possible
     for (auto i = 0ull; i < numValues; i += chunkSize) {
         FastPForLib::fastunpack((const uint32_t*)srcBuffer, (U*)dstBuffer + i, header.bitWidth);
         if (header.hasNegative) {

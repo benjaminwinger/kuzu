@@ -328,7 +328,11 @@ page_idx_t ColumnChunk::getNumPages() const {
 ColumnChunkMetadata ColumnChunk::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx) {
     FileUtils::writeToFile(dataFH->getFileInfo(), buffer.get(), bufferSize,
         startPageIdx * BufferPoolConstants::PAGE_4KB_SIZE);
-    auto numValuesPerPage = BufferPoolConstants::PAGE_4KB_SIZE / getDataTypeSizeInChunk(dataType);
+    auto numBytesPerFixedSizedValue = getDataTypeSizeInChunk(dataType);
+    auto numValuesPerPage =
+        numBytesPerFixedSizedValue == 0 ?
+            0 :
+            PageUtils::getNumElementsInAPage(numBytesPerFixedSizedValue, false /*hasNull */);
     return ColumnChunkMetadata(startPageIdx, getNumPagesForBuffer(), numValues, numValuesPerPage);
 }
 
@@ -460,17 +464,17 @@ std::unique_ptr<ColumnChunk> ColumnChunkFactory::createColumnChunk(
             chunk = std::make_unique<SerialColumnChunk>();
         } else {
             chunk = std::make_unique<CompressedColumnChunk>(
-                std::make_unique<IntegerBitpacking<int64_t, uint64_t>>(), copyDescription);
+                std::make_unique<IntegerBitpacking<int64_t, uint64_t>>(), dataType, copyDescription);
         }
-    }
+    } break;
     case PhysicalTypeID::INT32: {
         if (dataType.getLogicalTypeID() == LogicalTypeID::SERIAL) {
             chunk = std::make_unique<SerialColumnChunk>();
         } else {
             chunk = std::make_unique<CompressedColumnChunk>(
-                std::make_unique<IntegerBitpacking<int32_t, uint32_t>>(), copyDescription);
+                std::make_unique<IntegerBitpacking<int32_t, uint32_t>>(), dataType, copyDescription);
         }
-    }
+    } break;
     case PhysicalTypeID::INT16: /* {
          if (dataType.getLogicalTypeID() == LogicalTypeID::SERIAL) {
              chunk = std::make_unique<SerialColumnChunk>();
@@ -478,7 +482,7 @@ std::unique_ptr<ColumnChunk> ColumnChunkFactory::createColumnChunk(
              chunk = std::make_unique<CompressedColumnChunk>(
                  std::make_unique<IntegerBitpacking<int16_t, uint16_t>>(), copyDescription);
          }
-     }*/
+     } break; */
     case PhysicalTypeID::DOUBLE:
     case PhysicalTypeID::FLOAT:
     case PhysicalTypeID::INTERVAL: {
@@ -593,16 +597,18 @@ void BoolColumnChunk::resize(uint64_t capacity) {
     }
 }
 
-CompressedColumnChunk::CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg,
+CompressedColumnChunk::CompressedColumnChunk(std::unique_ptr<CompressionAlg> alg, LogicalType dataType,
     common::CopyDescription* copyDescription, bool hasNullChunk)
-    : ColumnChunk(alg->logicalType(), copyDescription, hasNullChunk) {}
+    : ColumnChunk(dataType, copyDescription, hasNullChunk), alg(std::move(alg)) {}
 
-ColumnChunkMetadata CompressedColumnChunk::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx) {
-    auto valuesRemaining = numValues;
+ColumnChunkMetadata CompressedColumnChunk::flushBuffer(
+    BMFileHandle* dataFH, page_idx_t startPageIdx) {
+    int64_t valuesRemaining = numValues;
     const uint8_t* bufferStart = buffer.get();
     auto compressedBuffer = std::make_unique<uint8_t>(BufferPoolConstants::PAGE_4KB_SIZE);
     auto numPages = 0;
-    auto numValuesPerPage = alg->startCompression(buffer.get(), numValues, BufferPoolConstants::PAGE_4KB_SIZE);
+    auto numValuesPerPage =
+        alg->startCompression(buffer.get(), numValues, BufferPoolConstants::PAGE_4KB_SIZE);
     while (valuesRemaining > 0) {
         auto compressedSize = alg->compressNextPage(bufferStart, valuesRemaining,
             compressedBuffer.get(), BufferPoolConstants::PAGE_4KB_SIZE);

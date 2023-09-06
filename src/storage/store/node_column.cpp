@@ -344,7 +344,7 @@ static_assert(PageUtils::getNumElementsInAPage(1, false /*requireNullColumn*/) %
 BoolNodeColumn::BoolNodeColumn(const MetadataDAHInfo& metaDAHeaderInfo, BMFileHandle* dataFH,
     BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal, Transaction* transaction,
     bool requireNullColumn)
-    : NodeColumn{std::make_unique<CompressedMapping>(std::make_unique<BoolCompression>()),
+    : NodeColumn{std::make_unique<CompressedMapping>(LogicalType(LogicalTypeID::BOOL), std::make_unique<BoolCompression>()),
           metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction,
           requireNullColumn} {}
 
@@ -429,16 +429,18 @@ std::unique_ptr<NodeColumn> NodeColumnFactory::createNodeColumn(const LogicalTyp
         return std::make_unique<BoolNodeColumn>(
             metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
     }
+    case LogicalTypeID::TIMESTAMP:
     case LogicalTypeID::INT64: {
         return std::make_unique<NodeColumn>(
             std::make_unique<CompressedMapping>(
-                std::make_unique<IntegerBitpacking<int64_t, uint64_t>>()),
+                dataType, std::make_unique<IntegerBitpacking<int64_t, uint64_t>>()),
             metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
     }
+    case LogicalTypeID::DATE:
     case LogicalTypeID::INT32: {
         return std::make_unique<NodeColumn>(
             std::make_unique<CompressedMapping>(
-                std::make_unique<IntegerBitpacking<int32_t, uint32_t>>()),
+                dataType, std::make_unique<IntegerBitpacking<int32_t, uint32_t>>()),
             metaDAHeaderInfo, dataFH, metadataFH, bufferManager, wal, transaction);
     }
     case LogicalTypeID::INT16: /* {
@@ -449,8 +451,6 @@ std::unique_ptr<NodeColumn> NodeColumnFactory::createNodeColumn(const LogicalTyp
      }*/
     case LogicalTypeID::DOUBLE:
     case LogicalTypeID::FLOAT:
-    case LogicalTypeID::DATE:
-    case LogicalTypeID::TIMESTAMP:
     case LogicalTypeID::INTERVAL:
     case LogicalTypeID::FIXED_LIST: {
         return std::make_unique<NodeColumn>(std::make_unique<FixedValueMapping>(dataType),
