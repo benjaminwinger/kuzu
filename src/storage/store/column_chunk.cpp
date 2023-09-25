@@ -121,6 +121,20 @@ ColumnChunk::ColumnChunk(
             GetCompressionMetadata(std::make_unique<IntegerBitpacking<int32_t>>(), this->dataType);
         break;
     }
+    case PhysicalTypeID::INT16: {
+        flushBufferFunction =
+            CompressedFlushBuffer(std::make_unique<IntegerBitpacking<int16_t>>(), this->dataType);
+        getMetadataFunction =
+            GetCompressionMetadata(std::make_unique<IntegerBitpacking<int16_t>>(), this->dataType);
+        break;
+    }
+    case PhysicalTypeID::INT8: {
+        flushBufferFunction =
+            CompressedFlushBuffer(std::make_unique<IntegerBitpacking<int8_t>>(), this->dataType);
+        getMetadataFunction =
+            GetCompressionMetadata(std::make_unique<IntegerBitpacking<int8_t>>(), this->dataType);
+        break;
+    }
     case PhysicalTypeID::UINT64: {
         flushBufferFunction =
             CompressedFlushBuffer(std::make_unique<IntegerBitpacking<uint64_t>>(), this->dataType);
@@ -133,6 +147,20 @@ ColumnChunk::ColumnChunk(
             CompressedFlushBuffer(std::make_unique<IntegerBitpacking<uint32_t>>(), this->dataType);
         getMetadataFunction =
             GetCompressionMetadata(std::make_unique<IntegerBitpacking<uint32_t>>(), this->dataType);
+        break;
+    }
+    case PhysicalTypeID::UINT16: {
+        flushBufferFunction =
+            CompressedFlushBuffer(std::make_unique<IntegerBitpacking<uint16_t>>(), this->dataType);
+        getMetadataFunction =
+            GetCompressionMetadata(std::make_unique<IntegerBitpacking<uint16_t>>(), this->dataType);
+        break;
+    }
+    case PhysicalTypeID::UINT8: {
+        flushBufferFunction =
+            CompressedFlushBuffer(std::make_unique<IntegerBitpacking<uint8_t>>(), this->dataType);
+        getMetadataFunction =
+            GetCompressionMetadata(std::make_unique<IntegerBitpacking<uint8_t>>(), this->dataType);
         break;
     }
     default: {
