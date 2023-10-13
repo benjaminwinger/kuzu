@@ -31,7 +31,7 @@ struct ScalarMacroFunction {
 
     std::unique_ptr<ScalarMacroFunction> copy() const;
 
-    void serialize(common::FileInfo* fileInfo, uint64_t& offset) const;
+    void serialize(common::SerDeser& serializer) const;
 
     static std::unique_ptr<ScalarMacroFunction> deserialize(
         common::FileInfo* fileInfo, uint64_t& offset);

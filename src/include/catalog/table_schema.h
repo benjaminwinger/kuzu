@@ -9,6 +9,9 @@
 #include "property.h"
 
 namespace kuzu {
+namespace common {
+class SerDeser;
+}
 namespace catalog {
 
 class TableSchema {
@@ -71,7 +74,7 @@ public:
 
     void renameProperty(common::property_id_t propertyID, const std::string& newName);
 
-    void serialize(common::FileInfo* fileInfo, uint64_t& offset);
+    void serialize(common::SerDeser& serializer);
     static std::unique_ptr<TableSchema> deserialize(common::FileInfo* fileInfo, uint64_t& offset);
 
     inline common::TableType getTableType() const { return tableType; }
@@ -85,7 +88,7 @@ public:
 private:
     inline common::property_id_t increaseNextPropertyID() { return nextPropertyID++; }
 
-    virtual void serializeInternal(common::FileInfo* fileInfo, uint64_t& offset) = 0;
+    virtual void serializeInternal(common::SerDeser& serializer) = 0;
 
 public:
     common::TableType tableType;

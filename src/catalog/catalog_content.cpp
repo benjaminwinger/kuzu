@@ -154,16 +154,16 @@ void CatalogContent::renameTable(table_id_t tableID, const std::string& newName)
 void CatalogContent::saveToFile(const std::string& directory, DBFileType dbFileType) {
     auto catalogPath = StorageUtils::getCatalogFilePath(directory, dbFileType);
     auto fileInfo = FileUtils::openFile(catalogPath, O_WRONLY | O_CREAT);
-    uint64_t offset = 0;
-    writeMagicBytes(fileInfo.get(), offset);
-    SerDeser::serializeValue(StorageVersionInfo::getStorageVersion(), fileInfo.get(), offset);
-    SerDeser::serializeValue(tableSchemas.size(), fileInfo.get(), offset);
+    SerDeser serializer(fileInfo.get());
+    writeMagicBytes(serializer);
+    serializer.serializeValue(StorageVersionInfo::getStorageVersion());
+    serializer.serializeValue(tableSchemas.size());
     for (auto& [tableID, tableSchema] : tableSchemas) {
-        SerDeser::serializeValue(tableID, fileInfo.get(), offset);
-        tableSchema->serialize(fileInfo.get(), offset);
+        serializer.serializeValue(tableID);
+        tableSchema->serialize(serializer);
     }
-    SerDeser::serializeValue(nextTableID, fileInfo.get(), offset);
-    SerDeser::serializeUnorderedMap(macros, fileInfo.get(), offset);
+    serializer.serializeValue(nextTableID);
+    serializer.serializeUnorderedMap(macros);
 }
 
 void CatalogContent::readFromFile(const std::string& directory, DBFileType dbFileType) {
@@ -248,10 +248,10 @@ void CatalogContent::validateMagicBytes(FileInfo* fileInfo, offset_t& offset) {
     }
 }
 
-void CatalogContent::writeMagicBytes(FileInfo* fileInfo, offset_t& offset) {
+void CatalogContent::writeMagicBytes(SerDeser& serializer) {
     auto numMagicBytes = strlen(StorageVersionInfo::MAGIC_BYTES);
     for (auto i = 0u; i < numMagicBytes; i++) {
-        SerDeser::serializeValue<uint8_t>(StorageVersionInfo::MAGIC_BYTES[i], fileInfo, offset);
+        serializer.serializeValue<uint8_t>(StorageVersionInfo::MAGIC_BYTES[i]);
     }
 }
 

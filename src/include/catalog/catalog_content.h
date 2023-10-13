@@ -9,6 +9,9 @@
 #include "table_schema.h"
 
 namespace kuzu {
+namespace common {
+class SerDeser;
+}
 namespace catalog {
 
 class CatalogContent {
@@ -119,7 +122,7 @@ private:
 
     static void validateMagicBytes(common::FileInfo* fileInfo, common::offset_t& offset);
 
-    static void writeMagicBytes(common::FileInfo* fileInfo, common::offset_t& offset);
+    static void writeMagicBytes(common::SerDeser& serializer);
 
     void registerBuiltInFunctions();
 

@@ -7,8 +7,8 @@ using namespace kuzu::common;
 namespace kuzu {
 namespace storage {
 
-void RelTableStats::serializeInternal(FileInfo* fileInfo, uint64_t& offset) {
-    SerDeser::serializeValue(nextRelOffset, fileInfo, offset);
+void RelTableStats::serializeInternal(SerDeser& serializer) {
+    serializer.serializeValue(nextRelOffset);
 }
 
 std::unique_ptr<RelTableStats> RelTableStats::deserialize(

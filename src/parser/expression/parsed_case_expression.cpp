@@ -7,9 +7,9 @@ using namespace kuzu::common;
 namespace kuzu {
 namespace parser {
 
-void ParsedCaseAlternative::serialize(FileInfo* fileInfo, uint64_t& offset) const {
-    whenExpression->serialize(fileInfo, offset);
-    thenExpression->serialize(fileInfo, offset);
+void ParsedCaseAlternative::serialize(SerDeser& serializer) const {
+    whenExpression->serialize(serializer);
+    thenExpression->serialize(serializer);
 }
 
 std::unique_ptr<ParsedCaseAlternative> ParsedCaseAlternative::deserialize(
@@ -43,10 +43,10 @@ std::unique_ptr<ParsedExpression> ParsedCaseExpression::copy() const {
         elseExpression ? elseExpression->copy() : nullptr);
 }
 
-void ParsedCaseExpression::serializeInternal(FileInfo* fileInfo, uint64_t& offset) const {
-    SerDeser::serializeOptionalValue(caseExpression, fileInfo, offset);
-    SerDeser::serializeVectorOfPtrs(caseAlternatives, fileInfo, offset);
-    SerDeser::serializeOptionalValue(elseExpression, fileInfo, offset);
+void ParsedCaseExpression::serializeInternal(SerDeser& serializer) const {
+    serializer.serializeOptionalValue(caseExpression);
+    serializer.serializeVectorOfPtrs(caseAlternatives);
+    serializer.serializeOptionalValue(elseExpression);
 }
 
 } // namespace parser

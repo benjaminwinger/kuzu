@@ -40,10 +40,10 @@ std::string getRelMultiplicityAsString(RelMultiplicity relMultiplicity) {
     }
 }
 
-void RelTableSchema::serializeInternal(FileInfo* fileInfo, uint64_t& offset) {
-    SerDeser::serializeValue(relMultiplicity, fileInfo, offset);
-    SerDeser::serializeValue(srcTableID, fileInfo, offset);
-    SerDeser::serializeValue(dstTableID, fileInfo, offset);
+void RelTableSchema::serializeInternal(SerDeser& serializer) {
+    serializer.serializeValue(relMultiplicity);
+    serializer.serializeValue(srcTableID);
+    serializer.serializeValue(dstTableID);
 }
 
 std::unique_ptr<RelTableSchema> RelTableSchema::deserialize(FileInfo* fileInfo, uint64_t& offset) {

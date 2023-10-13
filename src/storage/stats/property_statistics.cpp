@@ -6,8 +6,8 @@
 namespace kuzu {
 namespace storage {
 
-void PropertyStatistics::serialize(common::FileInfo* fileInfo, uint64_t& offset) {
-    common::SerDeser::serializeValue(mayHaveNullValue, fileInfo, offset);
+void PropertyStatistics::serialize(common::SerDeser& serializer) {
+    serializer.serializeValue(mayHaveNullValue);
 }
 
 RWPropertyStats::RWPropertyStats(TablesStatistics* tablesStatistics, common::table_id_t tableID,

@@ -80,14 +80,14 @@ void TableSchema::renameProperty(property_id_t propertyID, const std::string& ne
         StringUtils::string_format("Property with id={} not found.", propertyID));
 }
 
-void TableSchema::serialize(FileInfo* fileInfo, uint64_t& offset) {
-    SerDeser::serializeValue(tableName, fileInfo, offset);
-    SerDeser::serializeValue(tableID, fileInfo, offset);
-    SerDeser::serializeValue(tableType, fileInfo, offset);
-    SerDeser::serializeVectorOfPtrs(properties, fileInfo, offset);
-    SerDeser::serializeValue(comment, fileInfo, offset);
-    SerDeser::serializeValue(nextPropertyID, fileInfo, offset);
-    serializeInternal(fileInfo, offset);
+void TableSchema::serialize(SerDeser& serializer) {
+    serializer.serializeValue(tableName);
+    serializer.serializeValue(tableID);
+    serializer.serializeValue(tableType);
+    serializer.serializeVectorOfPtrs(properties);
+    serializer.serializeValue(comment);
+    serializer.serializeValue(nextPropertyID);
+    serializeInternal(serializer);
 }
 
 std::unique_ptr<TableSchema> TableSchema::deserialize(FileInfo* fileInfo, uint64_t& offset) {

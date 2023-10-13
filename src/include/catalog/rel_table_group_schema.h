@@ -27,7 +27,7 @@ public:
     }
 
 private:
-    void serializeInternal(common::FileInfo* fileInfo, uint64_t& offset) override;
+    void serializeInternal(common::SerDeser& serializer) override;
 
 private:
     std::vector<common::table_id_t> relTableIDs;

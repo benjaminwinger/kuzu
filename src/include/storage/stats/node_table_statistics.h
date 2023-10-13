@@ -8,6 +8,9 @@
 #include "storage/store/rels_store.h"
 
 namespace kuzu {
+namespace common {
+class SerDeser;
+}
 namespace storage {
 
 class NodeTableStatsAndDeletedIDs : public TableStatistics {
@@ -64,7 +67,7 @@ public:
         return metadataDAHInfos[columnID].get();
     }
 
-    void serializeInternal(common::FileInfo* fileInfo, uint64_t& offset) final;
+    void serializeInternal(common::SerDeser& serializer) final;
     static std::unique_ptr<NodeTableStatsAndDeletedIDs> deserialize(common::table_id_t tableID,
         common::offset_t maxNodeOffset, common::FileInfo* fileInfo, uint64_t& offset);
 

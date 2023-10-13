@@ -28,7 +28,7 @@ public:
     }
 
 private:
-    void serializeInternal(common::FileInfo* fileInfo, uint64_t& offset) final;
+    void serializeInternal(common::SerDeser& serializer) final;
 
 private:
     common::table_id_t nodeTableID;

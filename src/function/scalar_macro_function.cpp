@@ -25,14 +25,14 @@ std::unique_ptr<ScalarMacroFunction> ScalarMacroFunction::copy() const {
         expression->copy(), positionalArgs, std::move(defaultArgsCopy));
 }
 
-void ScalarMacroFunction::serialize(FileInfo* fileInfo, uint64_t& offset) const {
-    expression->serialize(fileInfo, offset);
-    SerDeser::serializeVector(positionalArgs, fileInfo, offset);
+void ScalarMacroFunction::serialize(SerDeser& serializer) const {
+    expression->serialize(serializer);
+    serializer.serializeVector(positionalArgs);
     auto vectorSize = defaultArgs.size();
-    SerDeser::serializeValue(vectorSize, fileInfo, offset);
+    serializer.serializeValue(vectorSize);
     for (auto& defaultArg : defaultArgs) {
-        SerDeser::serializeValue(defaultArg.first, fileInfo, offset);
-        defaultArg.second->serialize(fileInfo, offset);
+        serializer.serializeValue(defaultArg.first);
+        defaultArg.second->serialize(serializer);
     }
 }
 

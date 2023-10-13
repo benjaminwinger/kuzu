@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -14,21 +15,50 @@ namespace common {
 class LogicalType;
 
 class SerDeser {
+    // TODO: Buffer deserialisation
+    std::unique_ptr<uint8_t[]> buffer;
+    uint64_t fileOffset, bufferOffset;
+    FileInfo* fileInfo;
+    static const uint64_t BUFFER_SIZE = 4096;
+
+    void writeToBuffer(uint8_t* data, uint64_t size) {
+        if (bufferOffset + size <= BUFFER_SIZE) {
+            memcpy(&buffer[bufferOffset], data, size);
+            bufferOffset += size;
+        } else {
+            auto toCopy = BUFFER_SIZE - bufferOffset;
+            memcpy(&buffer[bufferOffset], data, toCopy);
+            bufferOffset += toCopy;
+            flush();
+            auto remaining = size - toCopy;
+            memcpy(buffer.get(), data + toCopy, remaining);
+            bufferOffset += remaining;
+        }
+    }
+    void flush() {
+        FileUtils::writeToFile(fileInfo, buffer.get(), bufferOffset, fileOffset);
+        fileOffset += bufferOffset;
+        bufferOffset = 0;
+        memset(buffer.get(), 0, BUFFER_SIZE);
+    }
 
 public:
+    ~SerDeser() { flush(); }
+    explicit SerDeser(FileInfo* fileInfo)
+        : buffer(std::make_unique<uint8_t[]>(BUFFER_SIZE)), fileOffset(0), bufferOffset(0),
+          fileInfo(fileInfo) {}
+
     template<typename T>
-    static void serializeValue(const T& value, FileInfo* fileInfo, uint64_t& offset) {
+    void serializeValue(const T& value) {
         static_assert(std::is_trivially_destructible<T>(), "value must be a trivial type");
-        FileUtils::writeToFile(fileInfo, (uint8_t*)&value, sizeof(T), offset);
-        offset += sizeof(T);
+        writeToBuffer((uint8_t*)&value, sizeof(T));
     }
 
     template<typename T>
-    static void serializeOptionalValue(
-        const std::unique_ptr<T>& value, FileInfo* fileInfo, uint64_t& offset) {
-        serializeValue(value == nullptr, fileInfo, offset);
+    void serializeOptionalValue(const std::unique_ptr<T>& value) {
+        serializeValue(value == nullptr);
         if (value != nullptr) {
-            value->serialize(fileInfo, offset);
+            value->serialize(*this);
         }
     }
 
@@ -50,33 +80,30 @@ public:
     }
 
     template<typename T1, typename T2>
-    static void serializeUnorderedMap(const std::unordered_map<T1, std::unique_ptr<T2>>& values,
-        FileInfo* fileInfo, uint64_t& offset) {
+    void serializeUnorderedMap(const std::unordered_map<T1, std::unique_ptr<T2>>& values) {
         uint64_t mapSize = values.size();
-        serializeValue(mapSize, fileInfo, offset);
+        serializeValue(mapSize);
         for (auto& value : values) {
-            serializeValue(value.first, fileInfo, offset);
-            value.second->serialize(fileInfo, offset);
+            serializeValue(value.first);
+            value.second->serialize(*this);
         }
     }
 
     template<typename T>
-    static void serializeVector(
-        const std::vector<T>& values, FileInfo* fileInfo, uint64_t& offset) {
+    void serializeVector(const std::vector<T>& values) {
         uint64_t vectorSize = values.size();
-        serializeValue<uint64_t>(vectorSize, fileInfo, offset);
+        serializeValue<uint64_t>(vectorSize);
         for (auto& value : values) {
-            serializeValue<T>(value, fileInfo, offset);
+            serializeValue<T>(value);
         }
     }
 
     template<typename T>
-    static void serializeVectorOfPtrs(
-        const std::vector<std::unique_ptr<T>>& values, FileInfo* fileInfo, uint64_t& offset) {
+    void serializeVectorOfPtrs(const std::vector<std::unique_ptr<T>>& values) {
         uint64_t vectorSize = values.size();
-        serializeValue<uint64_t>(vectorSize, fileInfo, offset);
+        serializeValue<uint64_t>(vectorSize);
         for (auto& value : values) {
-            value->serialize(fileInfo, offset);
+            value->serialize(*this);
         }
     }
 
@@ -116,12 +143,11 @@ public:
     }
 
     template<typename T>
-    static void serializeUnorderedSet(
-        const std::unordered_set<T>& values, FileInfo* fileInfo, uint64_t& offset) {
+    void serializeUnorderedSet(const std::unordered_set<T>& values) {
         uint64_t setSize = values.size();
-        serializeValue(setSize, fileInfo, offset);
-        for (auto& value : values) {
-            serializeValue(value, fileInfo, offset);
+        serializeValue(setSize);
+        for (const auto& value : values) {
+            serializeValue(value);
         }
     }
 
@@ -139,7 +165,7 @@ public:
 };
 
 template<>
-void SerDeser::serializeValue(const std::string& value, FileInfo* fileInfo, uint64_t& offset);
+void SerDeser::serializeValue(const std::string& value);
 
 template<>
 void SerDeser::deserializeValue(std::string& value, FileInfo* fileInfo, uint64_t& offset);

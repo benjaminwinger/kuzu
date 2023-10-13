@@ -34,12 +34,12 @@ TableStatistics::TableStatistics(const TableStatistics& other)
     }
 }
 
-void TableStatistics::serialize(FileInfo* fileInfo, uint64_t& offset) {
-    SerDeser::serializeValue(tableType, fileInfo, offset);
-    SerDeser::serializeValue(numTuples, fileInfo, offset);
-    SerDeser::serializeValue(tableID, fileInfo, offset);
-    SerDeser::serializeUnorderedMap(propertyStatistics, fileInfo, offset);
-    serializeInternal(fileInfo, offset);
+void TableStatistics::serialize(SerDeser& serializer) {
+    serializer.serializeValue(tableType);
+    serializer.serializeValue(numTuples);
+    serializer.serializeValue(tableID);
+    serializer.serializeUnorderedMap(propertyStatistics);
+    serializeInternal(serializer);
 }
 
 std::unique_ptr<TableStatistics> TableStatistics::deserialize(

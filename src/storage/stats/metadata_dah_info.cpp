@@ -16,10 +16,10 @@ std::unique_ptr<MetadataDAHInfo> MetadataDAHInfo::copy() {
     return result;
 }
 
-void MetadataDAHInfo::serialize(FileInfo* fileInfo, uint64_t& offset) const {
-    SerDeser::serializeValue(dataDAHPageIdx, fileInfo, offset);
-    SerDeser::serializeValue(nullDAHPageIdx, fileInfo, offset);
-    SerDeser::serializeVectorOfPtrs(childrenInfos, fileInfo, offset);
+void MetadataDAHInfo::serialize(SerDeser& serializer) const {
+    serializer.serializeValue(dataDAHPageIdx);
+    serializer.serializeValue(nullDAHPageIdx);
+    serializer.serializeVectorOfPtrs(childrenInfos);
 }
 
 std::unique_ptr<MetadataDAHInfo> MetadataDAHInfo::deserialize(

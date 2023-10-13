@@ -17,7 +17,7 @@ public:
     inline bool mayHaveNull() const { return mayHaveNullValue; }
     PropertyStatistics(PropertyStatistics& other) = default;
 
-    void serialize(common::FileInfo* fileInfo, uint64_t& offset);
+    void serialize(common::SerDeser& serializer);
     static std::unique_ptr<PropertyStatistics> deserialize(
         common::FileInfo* fileInfo, uint64_t& offset);
 

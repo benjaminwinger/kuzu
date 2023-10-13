@@ -35,8 +35,8 @@ public:
     }
 
 private:
-    void serializeInternal(common::FileInfo* fileInfo, uint64_t& offset) const override {
-        value->serialize(fileInfo, offset);
+    void serializeInternal(common::SerDeser& serializer) const override {
+        value->serialize(serializer);
     }
 
 private:

@@ -149,9 +149,9 @@ std::vector<offset_t> NodeTableStatsAndDeletedIDs::getDeletedNodeOffsets() const
     return retVal;
 }
 
-void NodeTableStatsAndDeletedIDs::serializeInternal(FileInfo* fileInfo, uint64_t& offset) {
-    SerDeser::serializeVector(getDeletedNodeOffsets(), fileInfo, offset);
-    SerDeser::serializeVectorOfPtrs(metadataDAHInfos, fileInfo, offset);
+void NodeTableStatsAndDeletedIDs::serializeInternal(SerDeser& serializer) {
+    serializer.serializeVector(getDeletedNodeOffsets());
+    serializer.serializeVectorOfPtrs(metadataDAHInfos);
 }
 
 std::unique_ptr<NodeTableStatsAndDeletedIDs> NodeTableStatsAndDeletedIDs::deserialize(

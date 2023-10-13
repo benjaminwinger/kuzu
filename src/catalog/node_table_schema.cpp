@@ -7,10 +7,10 @@ using namespace kuzu::common;
 namespace kuzu {
 namespace catalog {
 
-void NodeTableSchema::serializeInternal(FileInfo* fileInfo, uint64_t& offset) {
-    SerDeser::serializeValue(primaryKeyPropertyID, fileInfo, offset);
-    SerDeser::serializeUnorderedSet(fwdRelTableIDSet, fileInfo, offset);
-    SerDeser::serializeUnorderedSet(bwdRelTableIDSet, fileInfo, offset);
+void NodeTableSchema::serializeInternal(SerDeser& serializer) {
+    serializer.serializeValue(primaryKeyPropertyID);
+    serializer.serializeUnorderedSet(fwdRelTableIDSet);
+    serializer.serializeUnorderedSet(bwdRelTableIDSet);
 }
 
 std::unique_ptr<NodeTableSchema> NodeTableSchema::deserialize(

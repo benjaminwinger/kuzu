@@ -29,13 +29,12 @@ void TablesStatistics::saveToFile(const std::string& directory, DBFileType dbFil
     transaction::TransactionType transactionType) {
     auto filePath = getTableStatisticsFilePath(directory, dbFileType);
     auto fileInfo = FileUtils::openFile(filePath, O_WRONLY | O_CREAT);
-    uint64_t offset = 0;
+    auto ser = SerDeser(fileInfo.get());
     auto& tablesStatisticsContent = (transactionType == transaction::TransactionType::READ_ONLY ||
                                         tablesStatisticsContentForWriteTrx == nullptr) ?
                                         tablesStatisticsContentForReadOnlyTrx :
                                         tablesStatisticsContentForWriteTrx;
-    SerDeser::serializeUnorderedMap(
-        tablesStatisticsContent->tableStatisticPerTable, fileInfo.get(), offset);
+    ser.serializeUnorderedMap(tablesStatisticsContent->tableStatisticPerTable);
 }
 
 void TablesStatistics::initTableStatisticsForWriteTrx() {

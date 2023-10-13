@@ -7,11 +7,11 @@ using namespace kuzu::common;
 namespace kuzu {
 namespace catalog {
 
-void Property::serialize(FileInfo* fileInfo, uint64_t& offset) const {
-    SerDeser::serializeValue(name, fileInfo, offset);
-    dataType->serialize(fileInfo, offset);
-    SerDeser::serializeValue(propertyID, fileInfo, offset);
-    SerDeser::serializeValue(tableID, fileInfo, offset);
+void Property::serialize(SerDeser& serializer) const {
+    serializer.serializeValue(name);
+    dataType->serialize(serializer);
+    serializer.serializeValue(propertyID);
+    serializer.serializeValue(tableID);
 }
 
 std::unique_ptr<Property> Property::deserialize(FileInfo* fileInfo, uint64_t& offset) {

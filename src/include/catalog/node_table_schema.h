@@ -3,6 +3,9 @@
 #include "table_schema.h"
 
 namespace kuzu {
+namespace common {
+class SerDeser;
+}
 namespace catalog {
 
 class NodeTableSchema : public TableSchema {
@@ -53,7 +56,7 @@ public:
     }
 
 private:
-    void serializeInternal(common::FileInfo* fileInfo, uint64_t& offset) final;
+    void serializeInternal(common::SerDeser& serializer) final;
 
 private:
     // TODO(Semih): When we support updating the schemas, we need to update this or, we need

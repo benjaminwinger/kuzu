@@ -3,6 +3,9 @@
 #include "common/types/types.h"
 
 namespace kuzu {
+namespace common {
+class SerDeser;
+}
 namespace catalog {
 
 class Property {
@@ -37,7 +40,7 @@ public:
 
     inline void rename(std::string newName) { this->name = std::move(newName); }
 
-    void serialize(common::FileInfo* fileInfo, uint64_t& offset) const;
+    void serialize(common::SerDeser& serializer) const;
     static std::unique_ptr<Property> deserialize(common::FileInfo* fileInfo, uint64_t& offset);
 
     inline std::unique_ptr<Property> copy() const {

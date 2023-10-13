@@ -7,8 +7,8 @@ using namespace kuzu::common;
 namespace kuzu {
 namespace catalog {
 
-void RelTableGroupSchema::serializeInternal(FileInfo* fileInfo, uint64_t& offset) {
-    SerDeser::serializeVector(relTableIDs, fileInfo, offset);
+void RelTableGroupSchema::serializeInternal(SerDeser& serializer) {
+    serializer.serializeVector(relTableIDs);
 }
 
 std::unique_ptr<RelTableGroupSchema> RelTableGroupSchema::deserialize(

@@ -15,6 +15,7 @@
 namespace kuzu {
 namespace common {
 
+class SerDeser;
 class FileInfo;
 
 using sel_t = uint16_t;
@@ -134,14 +135,12 @@ class ExtraTypeInfo {
 public:
     virtual ~ExtraTypeInfo() = default;
 
-    inline void serialize(FileInfo* fileInfo, uint64_t& offset) const {
-        serializeInternal(fileInfo, offset);
-    }
+    inline void serialize(SerDeser& serializer) const { serializeInternal(serializer); }
 
     virtual std::unique_ptr<ExtraTypeInfo> copy() const = 0;
 
 protected:
-    virtual void serializeInternal(FileInfo* fileInfo, uint64_t& offset) const = 0;
+    virtual void serializeInternal(SerDeser& serializer) const = 0;
 };
 
 class VarListTypeInfo : public ExtraTypeInfo {
@@ -160,7 +159,7 @@ public:
     static std::unique_ptr<ExtraTypeInfo> deserialize(FileInfo* fileInfo, uint64_t& offset);
 
 protected:
-    void serializeInternal(FileInfo* fileInfo, uint64_t& offset) const override;
+    void serializeInternal(SerDeser& serializer) const override;
 
 protected:
     std::unique_ptr<LogicalType> childType;
@@ -180,7 +179,7 @@ public:
     std::unique_ptr<ExtraTypeInfo> copy() const override;
 
 private:
-    void serializeInternal(FileInfo* fileInfo, uint64_t& offset) const override;
+    void serializeInternal(SerDeser& serializer) const override;
 
 private:
     uint64_t fixedNumElementsInList;
@@ -200,7 +199,7 @@ public:
 
     bool operator==(const StructField& other) const;
 
-    void serialize(FileInfo* fileInfo, uint64_t& offset) const;
+    void serialize(SerDeser& serializer) const;
 
     static std::unique_ptr<StructField> deserialize(FileInfo* fileInfo, uint64_t& offset);
 
@@ -233,7 +232,7 @@ public:
     std::unique_ptr<ExtraTypeInfo> copy() const override;
 
 private:
-    void serializeInternal(FileInfo* fileInfo, uint64_t& offset) const override;
+    void serializeInternal(SerDeser& serializer) const override;
 
 private:
     std::vector<std::unique_ptr<StructField>> fields;
@@ -274,7 +273,7 @@ public:
         extraTypeInfo = std::move(typeInfo);
     }
 
-    void serialize(FileInfo* fileInfo, uint64_t& offset) const;
+    void serialize(SerDeser& serializer) const;
 
     static std::unique_ptr<LogicalType> deserialize(FileInfo* fileInfo, uint64_t& offset);
 

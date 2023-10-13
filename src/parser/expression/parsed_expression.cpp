@@ -37,12 +37,12 @@ parsed_expression_vector ParsedExpression::copyChildren() const {
     return childrenCopy;
 }
 
-void ParsedExpression::serialize(FileInfo* fileInfo, uint64_t& offset) const {
-    SerDeser::serializeValue(type, fileInfo, offset);
-    SerDeser::serializeValue(alias, fileInfo, offset);
-    SerDeser::serializeValue(rawName, fileInfo, offset);
-    SerDeser::serializeVectorOfPtrs(children, fileInfo, offset);
-    serializeInternal(fileInfo, offset);
+void ParsedExpression::serialize(SerDeser& serializer) const {
+    serializer.serializeValue(type);
+    serializer.serializeValue(alias);
+    serializer.serializeValue(rawName);
+    serializer.serializeVectorOfPtrs(children);
+    serializeInternal(serializer);
 }
 
 std::unique_ptr<ParsedExpression> ParsedExpression::deserialize(

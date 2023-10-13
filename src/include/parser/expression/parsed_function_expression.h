@@ -49,7 +49,7 @@ public:
     }
 
 private:
-    void serializeInternal(common::FileInfo* fileInfo, uint64_t& offset) const override;
+    void serializeInternal(common::SerDeser& serializer) const override;
 
 private:
     bool isDistinct;

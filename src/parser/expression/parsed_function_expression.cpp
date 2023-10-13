@@ -16,9 +16,9 @@ std::unique_ptr<ParsedFunctionExpression> ParsedFunctionExpression::deserialize(
     return std::make_unique<ParsedFunctionExpression>(isDistinct, std::move(functionName));
 }
 
-void ParsedFunctionExpression::serializeInternal(FileInfo* fileInfo, uint64_t& offset) const {
-    SerDeser::serializeValue(isDistinct, fileInfo, offset);
-    SerDeser::serializeValue(functionName, fileInfo, offset);
+void ParsedFunctionExpression::serializeInternal(SerDeser& serializer) const {
+    serializer.serializeValue(isDistinct);
+    serializer.serializeValue(functionName);
 }
 
 } // namespace parser
