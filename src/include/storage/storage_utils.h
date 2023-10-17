@@ -302,7 +302,7 @@ public:
         return fileName + common::StorageConstants::WAL_FILE_SUFFIX;
     }
 
-    static std::unique_ptr<common::FileInfo> getFileInfoForReadWrite(
+    static std::string getFileNameForReadWrite(
         const std::string& directory, StorageStructureID storageStructureID);
 
     static std::string getColumnFName(

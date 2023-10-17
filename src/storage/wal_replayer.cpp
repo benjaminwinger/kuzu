@@ -39,9 +39,10 @@ void WALReplayer::replay() {
     if (!wal->isEmptyWAL()) {
         auto walIterator = wal->getIterator();
         WALRecord walRecord;
+        std::unordered_map<std::string, std::unique_ptr<FileInfo>> fileCache;
         while (walIterator->hasNextRecord()) {
             walIterator->getNextRecord(walRecord);
-            replayWALRecord(walRecord);
+            replayWALRecord(fileCache, walRecord);
         }
     }
 
@@ -55,10 +56,11 @@ void WALReplayer::replay() {
     }
 }
 
-void WALReplayer::replayWALRecord(WALRecord& walRecord) {
+void WALReplayer::replayWALRecord(
+    std::unordered_map<std::string, std::unique_ptr<FileInfo>>& fileCache, WALRecord& walRecord) {
     switch (walRecord.recordType) {
     case WALRecordType::PAGE_UPDATE_OR_INSERT_RECORD: {
-        replayPageUpdateOrInsertRecord(walRecord);
+        replayPageUpdateOrInsertRecord(fileCache, walRecord);
     } break;
     case WALRecordType::TABLE_STATISTICS_RECORD: {
         replayTableStatisticsRecord(walRecord);
@@ -102,19 +104,25 @@ void WALReplayer::replayWALRecord(WALRecord& walRecord) {
     }
 }
 
-void WALReplayer::replayPageUpdateOrInsertRecord(const kuzu::storage::WALRecord& walRecord) {
+void WALReplayer::replayPageUpdateOrInsertRecord(
+    std::unordered_map<std::string, std::unique_ptr<FileInfo>>& fileCache,
+    const kuzu::storage::WALRecord& walRecord) {
     // 1. As the first step we copy over the page on disk, regardless of if we are recovering
     // (and checkpointing) or checkpointing while during regular execution.
     auto storageStructureID = walRecord.pageInsertOrUpdateRecord.storageStructureID;
-    std::unique_ptr<FileInfo> fileInfoOfStorageStructure =
-        StorageUtils::getFileInfoForReadWrite(wal->getDirectory(), storageStructureID);
     if (isCheckpoint) {
         if (!wal->isLastLoggedRecordCommit()) {
             // Nothing to undo.
             return;
         }
+        auto fileName =
+            StorageUtils::getFileNameForReadWrite(wal->getDirectory(), storageStructureID);
+        if (!fileCache.contains(fileName)) {
+            fileCache.insert(std::make_pair(fileName, FileUtils::openFile(fileName, O_RDWR)));
+        }
+        FileInfo* fileInfoOfStorageStructure = fileCache[fileName].get();
         walFileHandle->readPage(pageBuffer.get(), walRecord.pageInsertOrUpdateRecord.pageIdxInWAL);
-        FileUtils::writeToFile(fileInfoOfStorageStructure.get(), pageBuffer.get(),
+        FileUtils::writeToFile(fileInfoOfStorageStructure, pageBuffer.get(),
             BufferPoolConstants::PAGE_4KB_SIZE,
             walRecord.pageInsertOrUpdateRecord.pageIdxInOriginalFile *
                 BufferPoolConstants::PAGE_4KB_SIZE);

@@ -68,35 +68,34 @@ std::string StorageUtils::getAdjColumnFName(const std::string& directory,
         FileUtils::joinPath(directory, fName + StorageConstants::COLUMN_FILE_SUFFIX), dbFileType);
 }
 
-std::unique_ptr<FileInfo> StorageUtils::getFileInfoForReadWrite(
+std::string StorageUtils::getFileNameForReadWrite(
     const std::string& directory, StorageStructureID storageStructureID) {
-    std::string fName;
     switch (storageStructureID.storageStructureType) {
     case StorageStructureType::METADATA: {
-        fName = getMetadataFName(directory);
+        return getMetadataFName(directory);
     } break;
     case StorageStructureType::DATA: {
-        fName = getDataFName(directory);
+        return getDataFName(directory);
     } break;
     case StorageStructureType::COLUMN: {
-        fName = getColumnFName(directory, storageStructureID);
+        return getColumnFName(directory, storageStructureID);
     } break;
     case StorageStructureType::LISTS: {
-        fName = getListFName(directory, storageStructureID);
+        return getListFName(directory, storageStructureID);
     } break;
     case StorageStructureType::NODE_INDEX: {
-        fName = getNodeIndexFName(
+        auto fName = getNodeIndexFName(
             directory, storageStructureID.nodeIndexID.tableID, DBFileType::ORIGINAL);
         if (storageStructureID.isOverflow) {
             fName = getOverflowFileName(fName);
         }
+        return fName;
     } break;
     default: {
         throw RuntimeException("Unsupported StorageStructureID in "
                                "StorageUtils::getFileInfoFromStorageStructureID.");
     }
     }
-    return FileUtils::openFile(fName, O_RDWR);
 }
 
 std::string StorageUtils::getColumnFName(
