@@ -100,10 +100,12 @@ std::unique_ptr<MetadataDAHInfo> TablesStatistics::createMetadataDAHInfo(
             createMetadataDAHInfo(*VarListType::getChildType(&dataType), metadataFH, bm, wal));
     } break;
     case PhysicalTypeID::STRING: {
-        auto childMetadataDAHInfo = std::make_unique<MetadataDAHInfo>();
-        childMetadataDAHInfo->dataDAHPageIdx =
-            InMemDiskArray<OverflowColumnChunkMetadata>::addDAHPageToFile(metadataFH, bm, wal);
-        metadataDAHInfo->childrenInfos.push_back(std::move(childMetadataDAHInfo));
+        // Data column
+        metadataDAHInfo->childrenInfos.push_back(
+            createMetadataDAHInfo(LogicalType(LogicalTypeID::UINT8), metadataFH, bm, wal));
+        // Offset column
+        metadataDAHInfo->childrenInfos.push_back(
+            createMetadataDAHInfo(LogicalType(LogicalTypeID::UINT64), metadataFH, bm, wal));
     } break;
     default: {
         // DO NOTHING.

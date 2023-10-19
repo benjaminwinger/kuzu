@@ -1,8 +1,7 @@
 #include "storage/store/string_column_chunk.h"
 
-#include "common/exception/copy.h"
-#include "common/exception/message.h"
 #include "common/exception/not_implemented.h"
+#include "common/types/value/value.h"
 #include "storage/store/table_copy_utils.h"
 
 using namespace kuzu::common;
@@ -10,30 +9,45 @@ using namespace kuzu::common;
 namespace kuzu {
 namespace storage {
 
-StringColumnChunk::StringColumnChunk(LogicalType dataType) : ColumnChunk{std::move(dataType)} {
-    overflowFile = std::make_unique<InMemOverflowFile>();
-    overflowCursor.pageIdx = 0;
-    overflowCursor.offsetInPage = 0;
+StringColumnChunk::StringColumnChunk(LogicalType dataType)
+    : ColumnChunk{std::move(dataType), false /*enableCompression*/} {
+    // Bitpacking might save 1 bit per value with regular ascii compared to UTF-8
+    // Detecting when we need to re-compress the child chunks is not currently supported.
+    bool enableCompression = false;
+    stringDataChunk = std::make_unique<ColumnChunk>(
+        LogicalType(LogicalTypeID::UINT8), enableCompression, false /*hasNullChunk*/);
+    // TODO: the offset chunk should be able to grow beyond the node group size.
+    // We rely on appending to the dictionary when updating, however if the chunk is full,
+    // there will be no space for in-place updates.
+    // The data chunk doubles in size on use, but out of place updates will never need the offset
+    // chunk to be greater than the node group size since they remove unused entries. What we might
+    // want to do is start the offset chunk smaller (particularly for compressed chunks) and let it
+    // grow. Maybe start it at 3/4 node group size for dictionaries with fewer than 1/2 node group
+    // size values, and let it grow to 1.5x for larger chunks. That way we update out of place for
+    // every node group size/2 in-place updates (or 3/4 node group size for small chunks).
+    offsetChunk = std::make_unique<ColumnChunk>(
+        LogicalType(LogicalTypeID::UINT64), enableCompression, false /*hasNullChunk*/);
 }
 
 void StringColumnChunk::resetToEmpty() {
     ColumnChunk::resetToEmpty();
-    overflowFile = std::make_unique<InMemOverflowFile>();
-    overflowCursor.resetValue();
+    stringDataChunk->resetToEmpty();
+    offsetChunk->resetToEmpty();
 }
 
 void StringColumnChunk::append(ValueVector* vector, offset_t startPosInChunk) {
     assert(vector->dataType.getPhysicalType() == PhysicalTypeID::STRING);
-    ColumnChunk::copyVectorToBuffer(vector, startPosInChunk);
-    auto stringsToSetOverflow = (ku_string_t*)(buffer.get() + startPosInChunk * numBytesPerValue);
     for (auto i = 0u; i < vector->state->selVector->selectedSize; i++) {
-        auto& stringToSet = stringsToSetOverflow[i];
-        if (!ku_string_t::isShortString(stringToSet.len)) {
-            overflowFile->copyStringOverflow(
-                overflowCursor, reinterpret_cast<uint8_t*>(stringToSet.overflowPtr), &stringToSet);
+        // index is stored in main chunk, data is stored in the data chunk
+        auto pos = vector->state->selVector->selectedPositions[i];
+        nullChunk->setNull(startPosInChunk + i, vector->isNull(pos));
+        if (vector->isNull(pos)) {
+            numValues++;
+            continue;
         }
+        auto kuString = vector->getValue<ku_string_t>(pos);
+        setValueFromString(kuString.getAsString().c_str(), kuString.len, startPosInChunk + i);
     }
-    numValues += vector->state->selVector->selectedSize;
 }
 
 void StringColumnChunk::append(ColumnChunk* other, offset_t startPosInOtherChunk,
@@ -48,10 +62,9 @@ void StringColumnChunk::append(ColumnChunk* other, offset_t startPosInOtherChunk
             otherChunk, startPosInOtherChunk, startPosInChunk, numValuesToAppend);
     } break;
     default: {
-        throw NotImplementedException("VarSizedColumnChunk::append");
+        throw NotImplementedException("StringColumnChunk::append");
     }
     }
-    numValues += numValuesToAppend;
 }
 
 void StringColumnChunk::update(ValueVector* vector, vector_idx_t vectorIdx) {
@@ -66,40 +79,37 @@ void StringColumnChunk::update(ValueVector* vector, vector_idx_t vectorIdx) {
         }
     }
 }
-page_idx_t StringColumnChunk::flushOverflowBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx) {
-    for (auto i = 0u; i < overflowFile->getNumPages(); i++) {
-        FileUtils::writeToFile(dataFH->getFileInfo(), overflowFile->getPage(i)->data,
-            BufferPoolConstants::PAGE_4KB_SIZE, startPageIdx * BufferPoolConstants::PAGE_4KB_SIZE);
-        startPageIdx++;
-    }
-    return overflowFile->getNumPages();
-}
 
 void StringColumnChunk::appendStringColumnChunk(StringColumnChunk* other,
     offset_t startPosInOtherChunk, offset_t startPosInChunk, uint32_t numValuesToAppend) {
-    auto otherKuVals = reinterpret_cast<ku_string_t*>(other->buffer.get());
-    auto kuVals = reinterpret_cast<ku_string_t*>(buffer.get());
+    auto otherOffsets = reinterpret_cast<uint64_t*>(other->offsetChunk->getData());
+    auto offsets = reinterpret_cast<uint64_t*>(offsetChunk->getData());
+    auto indices = reinterpret_cast<uint64_t*>(buffer.get());
     for (auto i = 0u; i < numValuesToAppend; i++) {
         auto posInChunk = i + startPosInChunk;
         auto posInOtherChunk = i + startPosInOtherChunk;
-        kuVals[posInChunk] = otherKuVals[posInOtherChunk];
-        if (other->nullChunk->isNull(posInOtherChunk) ||
-            otherKuVals[posInOtherChunk].len <= ku_string_t::SHORT_STR_LENGTH) {
+        if (other->nullChunk->isNull(posInOtherChunk)) {
+            indices[posInChunk] = 0;
             continue;
         }
-        PageByteCursor cursorToCopyFrom;
-        TypeUtils::decodeOverflowPtr(otherKuVals[posInOtherChunk].overflowPtr,
-            cursorToCopyFrom.pageIdx, cursorToCopyFrom.offsetInPage);
-        overflowFile->copyStringOverflow(overflowCursor,
-            other->overflowFile->getPage(cursorToCopyFrom.pageIdx)->data +
-                cursorToCopyFrom.offsetInPage,
-            &kuVals[posInChunk]);
+        auto stringLength = other->getStringLength(posInOtherChunk);
+        auto stringStartOffset = stringDataChunk->getNumValues();
+        memcpy(stringDataChunk->getData() + stringStartOffset,
+            other->stringDataChunk->getData() + otherOffsets[posInOtherChunk], stringLength);
+        offsets[offsetChunk->getNumValues()] = stringStartOffset;
+        stringDataChunk->setNumValues(stringDataChunk->getNumValues() + stringLength);
+        indices[posInChunk] = offsetChunk->getNumValues();
+        offsetChunk->setNumValues(offsetChunk->getNumValues() + 1);
     }
+    numValues += numValuesToAppend;
 }
 
 void StringColumnChunk::write(const Value& val, uint64_t posToWrite) {
     assert(val.getDataType()->getPhysicalType() == PhysicalTypeID::STRING);
     nullChunk->setNull(posToWrite, val.isNull());
+    if (posToWrite >= numValues) {
+        numValues = posToWrite + 1;
+    }
     if (val.isNull()) {
         return;
     }
@@ -108,16 +118,36 @@ void StringColumnChunk::write(const Value& val, uint64_t posToWrite) {
 }
 
 void StringColumnChunk::setValueFromString(const char* value, uint64_t length, uint64_t pos) {
-    TableCopyUtils::validateStrLen(length);
-    auto val = overflowFile->copyString(value, length, overflowCursor);
-    setValue(val, pos);
+    auto space = stringDataChunk->getCapacity() - stringDataChunk->getNumValues();
+    if (length > space) {
+        stringDataChunk->resize(stringDataChunk->getCapacity() * 2);
+    }
+    if (pos >= numValues) {
+        numValues = pos + 1;
+    }
+    auto startOffset = stringDataChunk->getNumValues();
+    memcpy(stringDataChunk->getData() + startOffset, value, length);
+    stringDataChunk->setNumValues(startOffset + length);
+    auto index = offsetChunk->getNumValues();
+
+    if (index >= offsetChunk->getCapacity()) {
+        offsetChunk->resize(offsetChunk->getCapacity() * 2);
+    }
+    offsetChunk->setValue<string_offset_t>(startOffset, index);
+    offsetChunk->setNumValues(index + 1);
+    ColumnChunk::setValue<string_index_t>(index, pos);
 }
 
 // STRING
 template<>
+std::string_view StringColumnChunk::getValue<std::string_view>(offset_t pos) const {
+    auto index = ColumnChunk::getValue<string_index_t>(pos);
+    auto offset = offsetChunk->getValue<string_offset_t>(index);
+    return std::string_view((const char*)stringDataChunk->getData() + offset, getStringLength(pos));
+}
+template<>
 std::string StringColumnChunk::getValue<std::string>(offset_t pos) const {
-    auto kuStr = ((ku_string_t*)buffer.get())[pos];
-    return overflowFile->readString(&kuStr);
+    return std::string(getValue<std::string_view>(pos));
 }
 
 } // namespace storage

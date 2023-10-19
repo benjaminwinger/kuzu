@@ -16,6 +16,9 @@ using read_values_to_vector_func_t = std::function<void(uint8_t* frame,
     uint32_t numValuesToRead, const CompressionMetadata& metadata)>;
 using write_values_from_vector_func_t = std::function<void(uint8_t* frame, uint16_t posInFrame,
     common::ValueVector* vector, uint32_t posInVector, const CompressionMetadata& metadata)>;
+using write_values_func_t = std::function<void(uint8_t* frame, uint16_t posInFrame,
+    const uint8_t* data, common::offset_t dataOffset, common::offset_t numValues,
+    const CompressionMetadata& metadata)>;
 
 using read_values_to_page_func_t =
     std::function<void(uint8_t* frame, PageElementCursor& pageCursor, uint8_t* result,
@@ -27,26 +30,13 @@ class NullNodeColumn;
 class StructNodeColumn;
 // TODO(Guodong): This is intentionally duplicated with `Column`, as for now, we don't change rel
 // tables. `Column` is used for rel tables only. Eventually, we should remove `Column`.
-class NodeColumn {
+class BaseNodeColumn {
 public:
-    NodeColumn(common::LogicalType dataType, const MetadataDAHInfo& metaDAHeaderInfo,
+    BaseNodeColumn(common::LogicalType dataType, const MetadataDAHInfo& metaDAHeaderInfo,
         BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
         transaction::Transaction* transaction, RWPropertyStats PropertyStatistics,
         bool enableCompression, bool requireNullColumn = true);
-    virtual ~NodeColumn() = default;
-
-    // Expose for feature store
-    virtual void batchLookup(transaction::Transaction* transaction,
-        const common::offset_t* nodeOffsets, size_t size, uint8_t* result);
-
-    virtual void scan(transaction::Transaction* transaction, common::ValueVector* nodeIDVector,
-        common::ValueVector* resultVector);
-    virtual void scan(transaction::Transaction* transaction, common::node_group_idx_t nodeGroupIdx,
-        common::offset_t startOffsetInGroup, common::offset_t endOffsetInGroup,
-        common::ValueVector* resultVector, uint64_t offsetInVector);
-    virtual void scan(common::node_group_idx_t nodeGroupIdx, ColumnChunk* columnChunk);
-    virtual void lookup(transaction::Transaction* transaction, common::ValueVector* nodeIDVector,
-        common::ValueVector* resultVector);
+    virtual ~BaseNodeColumn() = default;
 
     virtual void append(ColumnChunk* columnChunk, uint64_t nodeGroupIdx);
 
@@ -69,34 +59,24 @@ public:
         return metadataDA->get(nodeGroupIdx, transaction);
     }
 
-    virtual void write(common::offset_t nodeOffset, common::ValueVector* vectorToWriteFrom,
-        uint32_t posInVectorToWriteFrom);
+    virtual void scan(common::node_group_idx_t nodeGroupIdx, ColumnChunk* columnChunk);
+    virtual void scan(transaction::Transaction* transaction, common::node_group_idx_t nodeGroupIdx,
+        common::offset_t startOffsetInGroup, common::offset_t endOffsetInGroup, uint8_t* result);
 
 protected:
-    virtual void scanInternal(transaction::Transaction* transaction,
-        common::ValueVector* nodeIDVector, common::ValueVector* resultVector);
     void scanUnfiltered(transaction::Transaction* transaction, PageElementCursor& pageCursor,
         uint64_t numValuesToScan, common::ValueVector* resultVector,
         const CompressionMetadata& compMeta, uint64_t startPosInVector = 0);
     void scanFiltered(transaction::Transaction* transaction, PageElementCursor& pageCursor,
         common::ValueVector* nodeIDVector, common::ValueVector* resultVector,
         const CompressionMetadata& compMeta);
-    virtual void lookupInternal(transaction::Transaction* transaction,
-        common::ValueVector* nodeIDVector, common::ValueVector* resultVector);
-    virtual void lookupValue(transaction::Transaction* transaction, common::offset_t nodeOffset,
-        common::ValueVector* resultVector, uint32_t posInVector);
 
     void readFromPage(transaction::Transaction* transaction, common::page_idx_t pageIdx,
         const std::function<void(uint8_t*)>& func);
 
-    virtual void writeValue(common::offset_t nodeOffset, common::ValueVector* vectorToWriteFrom,
-        uint32_t posInVectorToWriteFrom);
-
-    PageElementCursor getPageCursorForOffset(
-        transaction::TransactionType transactionType, common::offset_t nodeOffset);
-    // TODO(Guodong): This is mostly duplicated with
-    // StorageStructure::createWALVersionOfPageIfNecessaryForElement(). Should be cleared later.
-    WALPageIdxPosInPageAndFrame createWALVersionOfPageForValue(common::offset_t nodeOffset);
+    // Produces a page cursor for the offset relative to the given node group
+    PageElementCursor getPageCursorForOffsetInGroup(transaction::TransactionType transactionType,
+        common::offset_t nodeOffset, common::node_group_idx_t nodeGroupIdx);
 
 protected:
     StorageStructureID storageStructureID;
@@ -112,10 +92,84 @@ protected:
     std::unique_ptr<NodeColumn> nullColumn;
     read_values_to_vector_func_t readToVectorFunc;
     write_values_from_vector_func_t writeFromVectorFunc;
+    write_values_func_t writeFunc;
     read_values_to_page_func_t readToPageFunc;
     batch_lookup_func_t batchLookupFunc;
     RWPropertyStats propertyStatistics;
     bool enableCompression;
+};
+
+// NodeColumn where we assume it the underlying storage always stores NodeGroupSize values
+// Data is indexed using a global offset (which is internally used to find the node group via the
+// node group size)
+class NodeColumn : public BaseNodeColumn {
+public:
+    NodeColumn(common::LogicalType dataType, const MetadataDAHInfo& metaDAHeaderInfo,
+        BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
+        transaction::Transaction* transaction, RWPropertyStats propertyStatistics,
+        bool enableCompression, bool requireNullColumn = true)
+        : BaseNodeColumn{std::move(dataType), metaDAHeaderInfo, dataFH, metadataFH, bufferManager,
+              wal, transaction, propertyStatistics, enableCompression, requireNullColumn} {}
+
+    // Expose for feature store
+    virtual void batchLookup(transaction::Transaction* transaction,
+        const common::offset_t* nodeOffsets, size_t size, uint8_t* result);
+
+    virtual void scan(transaction::Transaction* transaction, common::ValueVector* nodeIDVector,
+        common::ValueVector* resultVector);
+    virtual void scan(transaction::Transaction* transaction, common::node_group_idx_t nodeGroupIdx,
+        common::offset_t startOffsetInGroup, common::offset_t endOffsetInGroup,
+        common::ValueVector* resultVector, uint64_t offsetInVector);
+    inline void scan(common::node_group_idx_t nodeGroupIdx, ColumnChunk* columnChunk) override {
+        BaseNodeColumn::scan(nodeGroupIdx, columnChunk);
+    }
+    virtual void lookup(transaction::Transaction* transaction, common::ValueVector* nodeIDVector,
+        common::ValueVector* resultVector);
+
+    virtual void write(common::offset_t nodeOffset, common::ValueVector* vectorToWriteFrom,
+        uint32_t posInVectorToWriteFrom);
+
+protected:
+    virtual void writeValue(const ColumnChunkMetadata& chunkMeta, common::offset_t nodeOffset,
+        common::ValueVector* vectorToWriteFrom, uint32_t posInVectorToWriteFrom);
+    virtual void writeValue(
+        const ColumnChunkMetadata& chunkMeta, common::offset_t nodeOffset, const uint8_t* data);
+
+    virtual void scanInternal(transaction::Transaction* transaction,
+        common::ValueVector* nodeIDVector, common::ValueVector* resultVector);
+    virtual void lookupInternal(transaction::Transaction* transaction,
+        common::ValueVector* nodeIDVector, common::ValueVector* resultVector);
+    virtual void lookupValue(transaction::Transaction* transaction, common::offset_t nodeOffset,
+        common::ValueVector* resultVector, uint32_t posInVector);
+
+    // TODO(Guodong): This is mostly duplicated with
+    // StorageStructure::createWALVersionOfPageIfNecessaryForElement(). Should be cleared later.
+    WALPageIdxPosInPageAndFrame createWALVersionOfPageForValue(common::offset_t nodeOffset);
+
+    // Produces a page cursor for the absolute node offset
+    PageElementCursor getPageCursorForOffset(
+        transaction::TransactionType transactionType, common::offset_t nodeOffset);
+    // Produces a page cursor for the absolute node offset, given a node group
+    PageElementCursor getPageCursorForOffsetAndGroup(transaction::TransactionType transactionType,
+        common::offset_t nodeOffset, common::node_group_idx_t nodeGroupIdx);
+};
+
+// NodeColumn for data adjacent to a NodeGroup
+// Data is indexed using the node group identifier and the offset within the node group
+class AuxiliaryNodeColumn : public BaseNodeColumn {
+public:
+    AuxiliaryNodeColumn(common::LogicalType dataType, const MetadataDAHInfo& metaDAHeaderInfo,
+        BMFileHandle* dataFH, BMFileHandle* metadataFH, BufferManager* bufferManager, WAL* wal,
+        transaction::Transaction* transaction, RWPropertyStats propertyStatistics,
+        bool enableCompression, bool requireNullColumn = true)
+        : BaseNodeColumn{std::move(dataType), metaDAHeaderInfo, dataFH, metadataFH, bufferManager,
+              wal, transaction, propertyStatistics, enableCompression, requireNullColumn} {}
+
+    // Append values to the end of the node group, resizing it if necessary
+    common::offset_t appendValues(
+        common::node_group_idx_t nodeGroupIdx, const uint8_t* data, common::offset_t numValues);
+
+protected:
 };
 
 struct NodeColumnFactory {
