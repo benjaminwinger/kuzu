@@ -1,17 +1,12 @@
 #pragma once
 
-#include "common/copier_config/copier_config.h"
-#include "common/type_utils.h"
+#include <functional>
+
+#include "common/constants.h"
 #include "common/types/types.h"
 #include "common/vector/value_vector.h"
 #include "compression.h"
 #include "storage/buffer_manager/bm_file_handle.h"
-#include "storage/wal/wal.h"
-#include "transaction/transaction.h"
-
-namespace arrow {
-class Array;
-}
 
 namespace kuzu {
 namespace storage {
@@ -19,35 +14,16 @@ namespace storage {
 class NullColumnChunk;
 class CompressionAlg;
 
-struct BaseColumnChunkMetadata {
+struct ColumnChunkMetadata {
     common::page_idx_t pageIdx;
     common::page_idx_t numPages;
-
-    BaseColumnChunkMetadata() : BaseColumnChunkMetadata{common::INVALID_PAGE_IDX, 0} {}
-    BaseColumnChunkMetadata(common::page_idx_t pageIdx, common::page_idx_t numPages)
-        : pageIdx(pageIdx), numPages(numPages) {}
-    virtual ~BaseColumnChunkMetadata() = default;
-};
-
-struct ColumnChunkMetadata : public BaseColumnChunkMetadata {
     uint64_t numValues;
     CompressionMetadata compMeta;
 
-    ColumnChunkMetadata() : BaseColumnChunkMetadata(), numValues{UINT64_MAX} {}
+    ColumnChunkMetadata() : pageIdx{common::INVALID_PAGE_IDX}, numPages{0}, numValues{UINT64_MAX} {}
     ColumnChunkMetadata(common::page_idx_t pageIdx, common::page_idx_t numPages,
-        uint64_t numNodesInChunk, CompressionMetadata compMeta)
-        : BaseColumnChunkMetadata{pageIdx, numPages}, numValues(numNodesInChunk),
-          compMeta(compMeta) {}
-};
-
-struct OverflowColumnChunkMetadata : public BaseColumnChunkMetadata {
-    common::offset_t lastOffsetInPage;
-
-    OverflowColumnChunkMetadata()
-        : BaseColumnChunkMetadata(), lastOffsetInPage{common::INVALID_OFFSET} {}
-    OverflowColumnChunkMetadata(
-        common::page_idx_t pageIdx, common::page_idx_t numPages, common::offset_t lastOffsetInPage)
-        : BaseColumnChunkMetadata{pageIdx, numPages}, lastOffsetInPage(lastOffsetInPage) {}
+        uint64_t numNodesInChunk, const CompressionMetadata& compMeta)
+        : pageIdx(pageIdx), numPages(numPages), numValues(numNodesInChunk), compMeta(compMeta) {}
 };
 
 // Base data segment covers all fixed-sized data types.
@@ -60,8 +36,9 @@ public:
 
     // ColumnChunks must be initialized after construction, so this constructor should only be used
     // through the ColumnChunkFactory
-    explicit ColumnChunk(
-        common::LogicalType dataType, bool enableCompression = true, bool hasNullChunk = true);
+    explicit ColumnChunk(common::LogicalType dataType, bool enableCompression = true,
+        bool hasNullChunk = true,
+        common::offset_t capacity = common::StorageConstants::NODE_GROUP_SIZE);
 
     virtual ~ColumnChunk() = default;
 
@@ -87,9 +64,6 @@ public:
 
     ColumnChunkMetadata flushBuffer(
         BMFileHandle* dataFH, common::page_idx_t startPageIdx, const ColumnChunkMetadata& metadata);
-
-    // Returns the size of the data type in bytes
-    static uint32_t getDataTypeSizeInChunk(common::LogicalType& dataType);
 
     static inline common::page_idx_t getNumPagesForBytes(uint64_t numBytes) {
         return (numBytes + common::BufferPoolConstants::PAGE_4KB_SIZE - 1) /

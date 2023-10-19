@@ -24,7 +24,7 @@ void test_compression(CompressionAlg& alg, std::vector<T> src) {
     EXPECT_EQ(src, decompressed);
     // works with all bit widths (but not all offsets)
     T value = 0;
-    alg.setValueFromUncompressed((uint8_t*)&value, 0, (uint8_t*)dest.data(), 1, metadata);
+    alg.setValuesFromUncompressed((uint8_t*)&value, 0, (uint8_t*)dest.data(), 1, 1, metadata);
     alg.decompressFromPage(dest.data(), 0, (uint8_t*)decompressed.data(), 0, src.size(), metadata);
     src[1] = value;
     EXPECT_EQ(decompressed, src);

@@ -34,13 +34,13 @@ public:
 class StringLocalVector : public LocalVector {
 public:
     explicit StringLocalVector(MemoryManager* mm)
-        : LocalVector{common::LogicalType(common::LogicalTypeID::STRING), mm}, ovfStringLength{
+        : LocalVector{common::LogicalType(common::LogicalTypeID::STRING), mm}, totalStringLength{
                                                                                    0} {};
 
     void update(common::sel_t offsetInLocalVector, common::ValueVector* updateVector,
         common::sel_t offsetInUpdateVector) final;
 
-    uint64_t ovfStringLength;
+    uint64_t totalStringLength;
 };
 
 class StructLocalVector : public LocalVector {

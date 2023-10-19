@@ -3,7 +3,6 @@
 #include "common/exception/message.h"
 #include "common/exception/runtime.h"
 #include "storage/store/node_table.h"
-#include "storage/store/string_column_chunk.h"
 #include "storage/store/string_node_column.h"
 #include "storage/store/struct_node_column.h"
 #include "storage/store/var_list_column_chunk.h"
@@ -46,9 +45,8 @@ void StringLocalVector::update(
     auto kuStr = updateVector->getValue<ku_string_t>(offsetInUpdateVector);
     if (kuStr.len > BufferPoolConstants::PAGE_4KB_SIZE) {
         throw RuntimeException(ExceptionMessage::overLargeStringValueException(kuStr.len));
-    } else if (!ku_string_t::isShortString(kuStr.len)) {
-        ovfStringLength += kuStr.len;
     }
+    totalStringLength += kuStr.len;
     LocalVector::update(offsetInLocalVector, updateVector, offsetInUpdateVector);
 }
 
@@ -227,16 +225,35 @@ void StringLocalColumn::prepareCommitForChunk(node_group_idx_t nodeGroupIdx) {
     assert(chunks.contains(nodeGroupIdx));
     auto localChunk = chunks.at(nodeGroupIdx).get();
     auto stringColumn = reinterpret_cast<StringNodeColumn*>(column);
-    auto overflowMetadata =
-        stringColumn->getOverflowMetadataDA()->get(nodeGroupIdx, TransactionType::WRITE);
-    auto ovfStringLengthInChunk = 0u;
+    auto dataColumnMetadata =
+        stringColumn->getDataColumn()->getMetadata(nodeGroupIdx, TransactionType::WRITE);
+    auto offsetColumnMetadata =
+        stringColumn->getOffsetColumn()->getMetadata(nodeGroupIdx, TransactionType::WRITE);
+    auto totalStringLengthInChunk = 0u;
+    uint64_t newStrings = 0;
     for (auto& [_, localVector] : localChunk->vectors) {
         auto stringLocalVector = reinterpret_cast<StringLocalVector*>(localVector.get());
-        ovfStringLengthInChunk += stringLocalVector->ovfStringLength;
+        totalStringLengthInChunk += stringLocalVector->totalStringLength;
+        newStrings += localVector->vector->state->selVector->selectedSize;
     }
-    if (overflowMetadata.lastOffsetInPage + ovfStringLengthInChunk <=
-        BufferPoolConstants::PAGE_4KB_SIZE) {
-        // Write the updated overflow strings to the overflow string buffer.
+    auto offsetCapacity =
+        offsetColumnMetadata.compMeta.numValues(
+            BufferPoolConstants::PAGE_4KB_SIZE, stringColumn->getOffsetColumn()->getDataType()) *
+        offsetColumnMetadata.numPages;
+    // Write in-place as long as there is sufficient space in the data chunk
+    if (dataColumnMetadata.numValues + totalStringLengthInChunk <=
+            dataColumnMetadata.numPages * BufferPoolConstants::PAGE_4KB_SIZE &&
+        offsetColumnMetadata.numValues + newStrings < offsetCapacity
+        // Indices are limited to 32 bits but in theory could be larger than that since the offset
+        // column can grow beyond the node group size.
+        //
+        // E.g. one big string is written first, followed by NODE_GROUP_SIZE-1 small strings,
+        // which are all updated in-place many times (which may fit if the first string is large
+        // enough that 2^n minus the first string's size is large enough to fit the other strings,
+        // for some n.
+        // 32 bits should give plenty of space for updates.
+        && offsetColumnMetadata.numValues + newStrings <
+               std::numeric_limits<StringNodeColumn::string_index_t>::max()) {
         commitLocalChunkInPlace(nodeGroupIdx, localChunk);
     } else {
         commitLocalChunkOutOfPlace(nodeGroupIdx, localChunk);
