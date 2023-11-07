@@ -8,6 +8,9 @@
 #include "kuzu_fwd.h"
 
 namespace kuzu {
+namespace validator {
+void validateDatabase(std::string);
+}
 namespace main {
 
 /**
@@ -43,6 +46,8 @@ class Database {
     friend class kuzu::testing::BaseGraphTest;
     friend class kuzu::testing::PrivateGraphTest;
     friend class transaction::TransactionContext;
+
+    friend void kuzu::validator::validateDatabase(std::string);
 
 public:
     /**
