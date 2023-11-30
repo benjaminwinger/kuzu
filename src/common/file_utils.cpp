@@ -66,6 +66,13 @@ std::unique_ptr<FileInfo> FileUtils::openFile(
         throw Exception(stringFormat("Cannot open file. path: {} - Error {}: {}", path,
             GetLastError(), std::system_category().message(GetLastError())));
     }
+    // Mark file as sparse (only when creating a new file)
+    if (flags & O_CREAT) {
+        // TODO: Should this be set for all files, or just specific ones like the data file?
+        dwDesiredAccess |= GENERIC_WRITE;
+        DWORD tmp;
+        DeviceIoControl(handle, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &tmp, NULL);
+    }
     if (lock_type != FileLockType::NO_LOCK) {
         DWORD dwFlags = lock_type == FileLockType::READ_LOCK ?
                             LOCKFILE_FAIL_IMMEDIATELY :
@@ -289,6 +296,32 @@ void FileUtils::truncateFileToSize(FileInfo* fileInfo, uint64_t size) {
         // LCOV_EXCL_START
         throw Exception(
             stringFormat("Failed to truncate file {}: {}", fileInfo->path, posixErrMessage()));
+        // LCOV_EXCL_STOP
+    }
+#endif
+}
+
+void FileUtils::punchHoleInFile(FileInfo* fileInfo, uint64_t position, uint64_t numBytes) {
+#if defined(_WIN32)
+    FILE_ZERO_DATA_INFORMATION fzdi;
+    fzdi.FileOffset.QuadPart = position;
+    fzdi.BeyondFinalZero.quadPart = position + numBytes;
+    if (!DeviceIoControl(
+            hSparseFile, FSCTL_SET_ZERO_DATA, &fzdi, sizeof(fzdi), NULL, 0, &dwTemp, NULL)) {
+        auto error = GetLastError();
+        throw Exception(stringFormat("Failed to punch hole in file: {} handle: {} "
+                                     "at {}+{}/{} Error {}: {}",
+            fileInfo->path, (intptr_t)fileInfo->handle, position, numBytes, fileInfo->getFileSize(),
+            error, std::system_category().message(error)));
+    }
+#else
+    auto result =
+        fallocate(fileInfo->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, position, numBytes);
+    // If the operation fails due to not being supported by the filesystem, ignore
+    if (result < 0 && errno != EOPNOTSUPP) {
+        // LCOV_EXCL_START
+        throw Exception(stringFormat("Failed to punch hole in file {} at {}+{}/{}: {}",
+            fileInfo->path, position, numBytes, fileInfo->getFileSize(), posixErrMessage()));
         // LCOV_EXCL_STOP
     }
 #endif

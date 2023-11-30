@@ -47,6 +47,11 @@ page_idx_t FileHandle::addNewPage() {
     return addNewPages(1 /* numNewPages */);
 }
 
+void FileHandle::removePages(page_idx_t startIdx, page_idx_t numPages) {
+    KU_ASSERT(numPages > 0);
+    FileUtils::punchHoleInFile(fileInfo.get(), startIdx * getPageSize(), numPages * getPageSize());
+}
+
 page_idx_t FileHandle::addNewPages(page_idx_t numNewPages) {
     std::unique_lock xlock(fhSharedMutex);
     auto numPagesBeforeChange = numPages;

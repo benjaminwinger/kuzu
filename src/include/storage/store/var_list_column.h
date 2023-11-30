@@ -72,6 +72,12 @@ protected:
 
     void append(ColumnChunk* columnChunk, uint64_t nodeGroupIdx) override;
 
+    void collectMetadataForCommit(std::vector<ColumnChunkMetadata>& metadata,
+        common::node_group_idx_t nodeGroupIdx, transaction::Transaction* transaction) override {
+        Column::collectMetadataForCommit(metadata, nodeGroupIdx, transaction);
+        metadata.push_back(dataColumn->getMetadata(nodeGroupIdx, transaction->getType()));
+    }
+
 private:
     inline common::offset_t readListOffsetInStorage(transaction::Transaction* transaction,
         common::node_group_idx_t nodeGroupIdx, common::offset_t offsetInNodeGroup) {

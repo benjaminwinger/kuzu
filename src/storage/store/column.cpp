@@ -780,10 +780,19 @@ void Column::commitLocalChunkInPlace(Transaction* /*transaction*/, node_group_id
     }
 }
 
+void Column::collectMetadataForCommit(std::vector<ColumnChunkMetadata>& metadata,
+    node_group_idx_t nodeGroupIdx, Transaction* transaction) {
+    metadata.push_back(getMetadata(nodeGroupIdx, transaction->getType()));
+    if (nullColumn) {
+        metadata.push_back(nullColumn->getMetadata(nodeGroupIdx, transaction->getType()));
+    }
+}
+
 void Column::commitLocalChunkOutOfPlace(Transaction* transaction, node_group_idx_t nodeGroupIdx,
     LocalVectorCollection* localChunk, bool isNewNodeGroup, const offset_to_row_idx_t& insertInfo,
     const offset_to_row_idx_t& updateInfo, const offset_set_t& deleteInfo) {
     auto columnChunk = ColumnChunkFactory::createColumnChunk(dataType->copy(), enableCompression);
+    std::vector<ColumnChunkMetadata> oldMetadata;
     if (isNewNodeGroup) {
         KU_ASSERT(updateInfo.empty() && deleteInfo.empty());
         // Apply inserts from the local chunk.
@@ -801,9 +810,15 @@ void Column::commitLocalChunkOutOfPlace(Transaction* transaction, node_group_idx
                 columnChunk->getNullChunk()->setNull(offsetInChunk, true /* isNull */);
             }
         }
+        collectMetadataForCommit(oldMetadata, nodeGroupIdx, transaction);
     }
     columnChunk->finalize();
     append(columnChunk.get(), nodeGroupIdx);
+    for (auto metadata : oldMetadata) {
+        if (metadata.numPages > 0) {
+            dataFH->removePages(metadata.pageIdx, metadata.numPages);
+        }
+    }
 }
 
 void Column::applyLocalChunkToColumnChunk(LocalVectorCollection* localChunk,

@@ -31,6 +31,8 @@ public:
 
     common::page_idx_t addNewPage();
     common::page_idx_t addNewPages(common::page_idx_t numPages);
+    // Punches holes in the file to reclaim space
+    void removePages(common::page_idx_t startIdx, common::page_idx_t numPages);
 
     inline void readPage(uint8_t* frame, common::page_idx_t pageIdx) const {
         KU_ASSERT(pageIdx < numPages);

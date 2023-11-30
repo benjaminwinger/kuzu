@@ -33,6 +33,12 @@ public:
     void rollbackInMemory() override;
 
 protected:
+    void collectMetadataForCommit(std::vector<ColumnChunkMetadata>& metadata,
+        common::node_group_idx_t nodeGroupIdx, transaction::Transaction* transaction) override {
+        Column::collectMetadataForCommit(metadata, nodeGroupIdx, transaction);
+        metadata.push_back(dataColumn->getMetadata(nodeGroupIdx, transaction->getType()));
+        metadata.push_back(offsetColumn->getMetadata(nodeGroupIdx, transaction->getType()));
+    }
     void scanInternal(transaction::Transaction* transaction, common::ValueVector* nodeIDVector,
         common::ValueVector* resultVector) override;
     void scanUnfiltered(transaction::Transaction* transaction,

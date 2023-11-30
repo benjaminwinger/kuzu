@@ -103,6 +103,8 @@ public:
         transaction::TransactionType transactionType, common::node_group_idx_t nodeGroupIdx) const;
 
 protected:
+    virtual void collectMetadataForCommit(std::vector<ColumnChunkMetadata>& metadata,
+        common::node_group_idx_t nodeGroupIdx, transaction::Transaction* transaction);
     virtual void scanInternal(transaction::Transaction* transaction,
         common::ValueVector* nodeIDVector, common::ValueVector* resultVector);
     void scanUnfiltered(transaction::Transaction* transaction, PageElementCursor& pageCursor,

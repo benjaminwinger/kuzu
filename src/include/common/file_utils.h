@@ -68,6 +68,8 @@ public:
         return std::filesystem::exists(path);
     }
 
+    static void punchHoleInFile(FileInfo* fileInfo, uint64_t position, uint64_t numBytes);
+
     static std::vector<std::string> globFilePath(const std::string& path);
 
     static inline std::string getFileExtension(const std::filesystem::path& path) {
