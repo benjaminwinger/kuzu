@@ -213,7 +213,7 @@ struct UDF {
     }
 
     template<typename TR, typename... Args>
-    static function_set getFunction(const std::string& name, TR (*udfFunc)(Args...),
+    static function_set getFunction(std::string_view name, TR (*udfFunc)(Args...),
         std::vector<common::LogicalTypeID> parameterTypes, common::LogicalTypeID returnType) {
         function_set definitions;
         if (returnType == common::LogicalTypeID::STRING) {
@@ -222,29 +222,29 @@ struct UDF {
         validateType<TR>(returnType);
         scalar_exec_func scalarExecFunc = getScalarExecFunc<TR, Args...>(udfFunc, parameterTypes);
         definitions.push_back(std::make_unique<function::ScalarFunction>(
-            name, std::move(parameterTypes), returnType, std::move(scalarExecFunc)));
+            std::string(name), std::move(parameterTypes), returnType, std::move(scalarExecFunc)));
         return definitions;
     }
 
     template<typename TR, typename... Args>
-    static function_set getFunction(const std::string& name, TR (*udfFunc)(Args...)) {
+    static function_set getFunction(std::string_view name, TR (*udfFunc)(Args...)) {
         return getFunction<TR, Args...>(
             name, udfFunc, getParameterTypes<Args...>(), getParameterType<TR>());
     }
 
     template<typename TR, typename... Args>
-    static function_set getVectorizedFunction(const std::string& name, scalar_exec_func execFunc) {
+    static function_set getVectorizedFunction(std::string_view name, scalar_exec_func execFunc) {
         function_set definitions;
-        definitions.push_back(std::make_unique<function::ScalarFunction>(
-            name, getParameterTypes<Args...>(), getParameterType<TR>(), std::move(execFunc)));
+        definitions.push_back(std::make_unique<function::ScalarFunction>(std::string(name),
+            getParameterTypes<Args...>(), getParameterType<TR>(), std::move(execFunc)));
         return definitions;
     }
 
-    static function_set getVectorizedFunction(const std::string& name, scalar_exec_func execFunc,
+    static function_set getVectorizedFunction(std::string_view name, scalar_exec_func execFunc,
         std::vector<common::LogicalTypeID> parameterTypes, common::LogicalTypeID returnType) {
         function_set definitions;
         definitions.push_back(std::make_unique<function::ScalarFunction>(
-            name, std::move(parameterTypes), returnType, std::move(execFunc)));
+            std::string(name), std::move(parameterTypes), returnType, std::move(execFunc)));
         return definitions;
     }
 };

@@ -56,7 +56,8 @@ static void getLockFileFlagsAndType(bool readOnly, bool createNew, int& flags, F
     lock = readOnly ? FileLockType::READ_LOCK : FileLockType::WRITE_LOCK;
 }
 
-Database::Database(std::string databasePath) : Database{std::move(databasePath), SystemConfig()} {}
+Database::Database(const char* databasePath, SystemConfig systemConfig)
+    : Database(std::string(databasePath), systemConfig) {}
 
 Database::Database(std::string databasePath, SystemConfig systemConfig)
     : databasePath{std::move(databasePath)}, systemConfig{systemConfig} {

@@ -65,13 +65,13 @@ public:
      * @param query The query to execute.
      * @return the result of the query.
      */
-    KUZU_API std::unique_ptr<QueryResult> query(const std::string& query);
+    KUZU_API std::unique_ptr<QueryResult> query(std::string_view query);
     /**
      * @brief Prepares the given query and returns the prepared statement.
      * @param query The query to prepare.
      * @return the prepared statement.
      */
-    KUZU_API std::unique_ptr<PreparedStatement> prepare(const std::string& query);
+    KUZU_API std::unique_ptr<PreparedStatement> prepare(std::string_view query);
     /**
      * @brief Executes the given prepared statement with args and returns the result.
      * @param preparedStatement The prepared statement to execute.
@@ -112,12 +112,12 @@ public:
     KUZU_API uint64_t getQueryTimeOut();
 
     template<typename TR, typename... Args>
-    void createScalarFunction(const std::string& name, TR (*udfFunc)(Args...)) {
+    void createScalarFunction(std::string_view name, TR (*udfFunc)(Args...)) {
         addScalarFunction(name, std::move(function::UDF::getFunction<TR, Args...>(name, udfFunc)));
     }
 
     template<typename TR, typename... Args>
-    void createScalarFunction(const std::string& name,
+    void createScalarFunction(std::string_view name,
         std::vector<common::LogicalTypeID> parameterTypes, common::LogicalTypeID returnType,
         TR (*udfFunc)(Args...)) {
         addScalarFunction(name, function::UDF::getFunction<TR, Args...>(
@@ -125,12 +125,12 @@ public:
     }
 
     template<typename TR, typename... Args>
-    void createVectorizedFunction(const std::string& name, function::scalar_exec_func scalarFunc) {
+    void createVectorizedFunction(std::string_view name, function::scalar_exec_func scalarFunc) {
         addScalarFunction(
             name, function::UDF::getVectorizedFunction<TR, Args...>(name, std::move(scalarFunc)));
     }
 
-    void createVectorizedFunction(const std::string& name,
+    void createVectorizedFunction(std::string_view name,
         std::vector<common::LogicalTypeID> parameterTypes, common::LogicalTypeID returnType,
         function::scalar_exec_func scalarFunc) {
         addScalarFunction(name, function::UDF::getVectorizedFunction(name, std::move(scalarFunc),
@@ -142,12 +142,12 @@ public:
     }
 
 private:
-    std::unique_ptr<QueryResult> query(const std::string& query, const std::string& encodedJoin);
+    std::unique_ptr<QueryResult> query(std::string_view query, std::string_view encodedJoin);
 
-    std::unique_ptr<QueryResult> queryResultWithError(const std::string& errMsg);
+    std::unique_ptr<QueryResult> queryResultWithError(std::string_view errMsg);
 
-    std::unique_ptr<PreparedStatement> prepareNoLock(const std::string& query,
-        bool enumerateAllPlans = false, const std::string& joinOrder = std::string{});
+    std::unique_ptr<PreparedStatement> prepareNoLock(std::string_view query,
+        bool enumerateAllPlans = false, std::string_view joinOrder = std::string_view());
 
     template<typename T, typename... Args>
     std::unique_ptr<QueryResult> executeWithParams(PreparedStatement* preparedStatement,
@@ -165,7 +165,7 @@ private:
     std::unique_ptr<QueryResult> executeAndAutoCommitIfNecessaryNoLock(
         PreparedStatement* preparedStatement, uint32_t planIdx = 0u);
 
-    KUZU_API void addScalarFunction(std::string name, function::function_set definitions);
+    KUZU_API void addScalarFunction(std::string_view name, function::function_set definitions);
 
 private:
     Database* database;
