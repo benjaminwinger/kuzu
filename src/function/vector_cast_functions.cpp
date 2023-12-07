@@ -756,8 +756,8 @@ function_set CastToStringFunction::getFunctionSet() {
     function_set result;
     result.reserve(LogicalTypeUtils::getAllValidLogicTypes().size());
     for (auto& type : LogicalTypeUtils::getAllValidLogicTypes()) {
-        result.push_back(CastFunction::bindCastFunction(
-            CAST_TO_STRING_FUNC_NAME, type.getLogicalTypeID(), LogicalTypeID::STRING));
+        result.push_back(
+            CastFunction::bindCastFunction(CAST_TO_STRING_FUNC_NAME, type, LogicalTypeID::STRING));
     }
     return result;
 }

@@ -82,8 +82,7 @@ std::unique_ptr<FunctionBindData> ListCreationFunction::bindFunc(
             }
         }
     }
-    auto varListTypeInfo = std::make_unique<VarListTypeInfo>(childType.copy());
-    auto resultType = LogicalType{LogicalTypeID::VAR_LIST, std::move(varListTypeInfo)};
+    auto resultType = LogicalType::VAR_LIST(childType.copy());
     return std::make_unique<FunctionBindData>(resultType);
 }
 
@@ -98,9 +97,8 @@ function_set ListCreationFunction::getFunctionSet() {
 std::unique_ptr<FunctionBindData> ListRangeFunction::bindFunc(
     const binder::expression_vector& arguments, Function* /*function*/) {
     KU_ASSERT(arguments[0]->dataType == arguments[1]->dataType);
-    auto varListTypeInfo = std::make_unique<VarListTypeInfo>(
+    auto resultType = LogicalType::VAR_LIST(
         std::make_unique<LogicalType>(arguments[0]->dataType.getLogicalTypeID()));
-    auto resultType = LogicalType{LogicalTypeID::VAR_LIST, std::move(varListTypeInfo)};
     return std::make_unique<FunctionBindData>(resultType);
 }
 

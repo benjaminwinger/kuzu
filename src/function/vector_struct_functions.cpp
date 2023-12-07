@@ -21,17 +21,15 @@ function_set StructPackFunctions::getFunctionSet() {
 
 std::unique_ptr<FunctionBindData> StructPackFunctions::bindFunc(
     const binder::expression_vector& arguments, Function* /*function*/) {
-    std::vector<std::unique_ptr<StructField>> fields;
+    std::vector<StructField> fields;
     for (auto& argument : arguments) {
         if (argument->getDataType().getLogicalTypeID() == LogicalTypeID::ANY) {
             binder::ExpressionBinder::resolveAnyDataType(
                 *argument, LogicalType{LogicalTypeID::STRING});
         }
-        fields.emplace_back(
-            std::make_unique<StructField>(argument->getAlias(), argument->getDataType().copy()));
+        fields.emplace_back(argument->getAlias(), argument->getDataType().copy());
     }
-    auto resultType =
-        LogicalType(LogicalTypeID::STRUCT, std::make_unique<StructTypeInfo>(std::move(fields)));
+    auto resultType = LogicalType::STRUCT(std::move(fields));
     return std::make_unique<FunctionBindData>(resultType);
 }
 

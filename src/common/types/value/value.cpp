@@ -88,9 +88,9 @@ Value Value::createDefaultValue(const LogicalType& dataType) {
     case LogicalTypeID::INTERNAL_ID:
         return Value(nodeID_t());
     case LogicalTypeID::BLOB:
-        return Value(LogicalType{LogicalTypeID::BLOB}, std::string(""));
+        return Value(LogicalType::BLOB(), std::string(""));
     case LogicalTypeID::STRING:
-        return Value(LogicalType{LogicalTypeID::STRING}, std::string(""));
+        return Value(LogicalType::STRING(), std::string(""));
     case LogicalTypeID::FLOAT:
         return Value((float_t)0);
     case LogicalTypeID::FIXED_LIST: {
@@ -238,8 +238,8 @@ Value::Value(uint8_t* val_) : isNull_{false} {
     val.pointer = val_;
 }
 
-Value::Value(const LogicalType& type, std::string val_) : isNull_{false} {
-    dataType = type.copy();
+Value::Value(std::unique_ptr<LogicalType> type, std::string val_)
+    : dataType{std::move(type)}, isNull_{false} {
     strVal = std::move(val_);
 }
 

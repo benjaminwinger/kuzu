@@ -72,9 +72,8 @@ std::unique_ptr<FunctionBindData> PropertiesFunction::bindFunc(
             stringFormat("Cannot extract properties from {}.", listType.toString()));
     }
     auto field = StructType::getField(childType, fieldIdx);
-    auto returnType = std::make_unique<LogicalType>(
-        LogicalTypeID::VAR_LIST, std::make_unique<VarListTypeInfo>(field->getType()->copy()));
-    return std::make_unique<PropertiesBindData>(*returnType, fieldIdx);
+    auto returnType = LogicalType::VAR_LIST(field->getType()->copy());
+    return std::make_unique<PropertiesBindData>(returnType, fieldIdx);
 }
 
 void PropertiesFunction::compileFunc(FunctionBindData* bindData,
