@@ -389,7 +389,6 @@ void ListColumn::prepareCommitForOffsetChunk(Transaction* transaction, ChunkStat
     metadataDA->prepareCommit();
     if (canCommitInPlace(offsetState, dstOffsets, chunk, startSrcOffset)) {
         Column::commitColumnChunkInPlace(offsetState, dstOffsets, chunk, startSrcOffset);
-        metadataDA->update(offsetState.nodeGroupIdx, offsetState.metadata);
         if (nullColumn) {
             nullColumn->prepareCommitForChunk(transaction, offsetState.nodeGroupIdx, false,
                 dstOffsets, chunk->getNullChunk(), startSrcOffset);

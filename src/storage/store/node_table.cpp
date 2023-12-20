@@ -211,7 +211,7 @@ void NodeTable::insertPK(const ValueVector& nodeIDVector, const ValueVector& pri
                 [&](ku_string_t) {
                     pkStr = primaryKeyVector.getValue<ku_string_t>(pkPos).getAsString();
                 },
-                [&pkStr, &primaryKeyVector, &pkPos]<typename T>(
+                [&]<typename T>(
                     T) { pkStr = TypeUtils::toString(primaryKeyVector.getValue<T>(pkPos)); });
             throw RuntimeException(ExceptionMessage::duplicatePKException(pkStr));
         }

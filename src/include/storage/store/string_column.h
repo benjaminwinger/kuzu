@@ -1,5 +1,6 @@
 #pragma once
 
+#include "storage/store/dictionary_chunk.h"
 #include "storage/store/dictionary_column.h"
 
 namespace kuzu {
@@ -24,7 +25,7 @@ public:
 
     void append(ColumnChunk* columnChunk, common::node_group_idx_t nodeGroupIdx) override;
 
-    void writeValue(ChunkState& state, common::offset_t offsetInChunk,
+    inline void writeValue(ChunkState& state, common::offset_t offsetInChunk,
         common::ValueVector* vectorToWriteFrom, uint32_t posInVectorToWriteFrom) override;
 
     void write(ChunkState& state, common::offset_t offsetInChunk, ColumnChunk* data,

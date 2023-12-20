@@ -1,11 +1,16 @@
 #include "storage/store/column.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
 
 #include "common/assert.h"
 #include "common/null_mask.h"
+#include "common/type_utils.h"
 #include "common/types/internal_id_t.h"
+#include "common/types/ku_string.h"
 #include "common/types/types.h"
+#include "storage/compression/compression.h"
 #include "storage/stats/property_statistics.h"
 #include "storage/storage_utils.h"
 #include "storage/store/column_chunk.h"
@@ -155,6 +160,7 @@ public:
         if (numValues > state.metadata.numValues) {
             state.metadata.numValues = numValues;
             // TODO: Avoid updating metadataDA.
+            state.metadata.compMeta.max = numValues;
             metadataDA->update(state.nodeGroupIdx, state.metadata);
         }
     }
@@ -175,6 +181,8 @@ public:
         }
         ColumnChunkMetadata chunkMeta;
         chunkMeta.numValues = numValues;
+        chunkMeta.compMeta.min = 0;
+        chunkMeta.compMeta.max = numValues;
         metadataDA->resize(nodeGroupIdx + 1);
         metadataDA->update(nodeGroupIdx, chunkMeta);
     }
@@ -518,8 +526,33 @@ void Column::write(ChunkState& state, offset_t offsetInChunk, ValueVector* vecto
     if (!isNull) {
         writeValue(state, offsetInChunk, vectorToWriteFrom, posInVectorToWriteFrom);
     }
-    if (offsetInChunk >= state.metadata.numValues) {
-        state.metadata.numValues = offsetInChunk + 1;
+    auto valueToWrite = StorageValue::readFromVector(*vectorToWriteFrom, posInVectorToWriteFrom);
+    updateStatistics(state.metadata, state.nodeGroupIdx, offsetInChunk, valueToWrite, valueToWrite);
+}
+
+void Column::updateStatistics(ColumnChunkMetadata& metadata, node_group_idx_t nodeGroupIdx,
+    offset_t maxIndex, std::optional<StorageValue> min, std::optional<StorageValue> max) {
+    bool metadataChanged = false;
+    if (maxIndex > metadata.numValues) {
+        metadata.numValues = maxIndex + 1;
+        KU_ASSERT(sanityCheckForWrites(metadata, dataType));
+        metadataChanged = true;
+    }
+    // Either both or neither should be provided
+    KU_ASSERT((!min && !max) || (min && max));
+    if (min && max) {
+        // FIXME(bmwinger): this is causing test failures
+        // If new values are outside of the existing min/max, update them
+        if (max->gt(metadata.compMeta.max, dataType.getPhysicalType())) {
+            metadata.compMeta.max = *max;
+            metadataChanged = true;
+        } else if (metadata.compMeta.min.gt(*min, dataType.getPhysicalType())) {
+            metadata.compMeta.min = *min;
+            metadataChanged = true;
+        }
+    }
+    if (metadataChanged) {
+        metadataDA->update(nodeGroupIdx, metadata);
     }
 }
 
@@ -541,9 +574,25 @@ void Column::write(ChunkState& state, offset_t offsetInChunk, ColumnChunk* data,
         nullMaskPtr = &nullMask;
     }
     writeValues(state, offsetInChunk, data->getData(), nullMaskPtr, dataOffset, numValues);
-    if (offsetInChunk + numValues > state.metadata.numValues) {
-        state.metadata.numValues = offsetInChunk + numValues;
-    }
+
+    std::optional<StorageValue> minWritten, maxWritten;
+    // TODO(bmwinger): STRING and VAR_LIST columns should store their offsets in separate columns
+    // with actual integer types so that we can store statistics about the values in the main column
+    // metadata. This should also simplify some code as we no longer need to sometimes treat those
+    // columns as integers
+    TypeUtils::visit(
+        dataType.getPhysicalType(),
+        [&]<typename T>(T)
+            requires(std::integral<T> || std::floating_point<T>)
+        {
+            auto typedData = reinterpret_cast<const T*>(data);
+            auto [min, max] = std::minmax_element(typedData, typedData + numValues);
+            minWritten = StorageValue(*min);
+            maxWritten = StorageValue(*max);
+        },
+        [&](ku_string_t) { KU_UNREACHABLE; }, [&](list_entry_t) { KU_UNREACHABLE; }, [&](auto) {});
+    updateStatistics(state.metadata, state.nodeGroupIdx, offsetInChunk + numValues, minWritten,
+        maxWritten);
 }
 
 void Column::writeValues(ChunkState& state, common::offset_t dstOffset, const uint8_t* data,
@@ -572,7 +621,21 @@ offset_t Column::appendValues(ChunkState& state, const uint8_t* data,
     auto newNumPages = dataFH->getNumPages();
     state.metadata.numValues += numValues;
     state.metadata.numPages += (newNumPages - numPages);
-    metadataDA->update(state.nodeGroupIdx, state.metadata);
+
+    std::optional<StorageValue> minWritten, maxWritten;
+    TypeUtils::visit(
+        dataType.getPhysicalType(),
+        [&]<typename T>(T)
+            requires(std::integral<T> || std::floating_point<T>)
+        {
+            auto typedData = reinterpret_cast<const T*>(data);
+            auto [min, max] = std::minmax_element(typedData, typedData + numValues);
+            minWritten = StorageValue(*min);
+            maxWritten = StorageValue(*max);
+        },
+        [&](ku_string_t) { KU_UNREACHABLE; }, [&](list_entry_t) { KU_UNREACHABLE; }, [&](auto) {});
+    updateStatistics(state.metadata, state.nodeGroupIdx, startOffset + numValues, minWritten,
+        maxWritten);
     return startOffset;
 }
 

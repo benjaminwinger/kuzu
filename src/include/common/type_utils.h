@@ -123,7 +123,7 @@ public:
      * See https://en.cppreference.com/w/cpp/utility/variant/visit
      */
     template<typename... Fs>
-    static inline void visit(LogicalTypeID dataType, Fs... funcs) {
+    static inline auto visit(LogicalTypeID dataType, Fs... funcs) {
         // Note: arguments are used only for type deduction and have no meaningful value.
         // They should be optimized out by the compiler
         auto func = overload(funcs...);
@@ -192,12 +192,15 @@ public:
         case LogicalTypeID::ANY:
         case LogicalTypeID::POINTER:
         case LogicalTypeID::RDF_VARIANT:
+            // Unsupported type
             KU_UNREACHABLE;
+            // Needed for return type deduction to work
+            return func(uint8_t());
         }
     }
 
     template<typename... Fs>
-    static inline void visit(PhysicalTypeID dataType, Fs&&... funcs) {
+    static inline auto visit(PhysicalTypeID dataType, Fs&&... funcs) {
         // Note: arguments are used only for type deduction and have no meaningful value.
         // They should be optimized out by the compiler
         auto func = overload(funcs...);
@@ -243,6 +246,8 @@ public:
         case PhysicalTypeID::POINTER:
             // Unsupported type
             KU_UNREACHABLE;
+            // Needed for return type deduction to work
+            return func(uint8_t());
         }
     }
 };

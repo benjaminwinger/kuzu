@@ -2,15 +2,16 @@
 
 #include "catalog/catalog.h"
 #include "common/null_mask.h"
+#include "common/types/types.h"
+#include "storage/compression/compression.h"
 #include "storage/stats/metadata_dah_info.h"
 #include "storage/stats/property_statistics.h"
 #include "storage/storage_structure/disk_array.h"
 #include "storage/store/column_chunk.h"
+#include <span>
 
 namespace kuzu {
 namespace storage {
-
-struct CompressionMetadata;
 
 using read_values_to_vector_func_t =
     std::function<void(uint8_t* frame, PageCursor& pageCursor, common::ValueVector* resultVector,
@@ -178,6 +179,9 @@ protected:
     }
 
     static ChunkCollection getNullChunkCollection(const ChunkCollection& chunkCollection);
+    void updateStatistics(ColumnChunkMetadata& metadata, common::node_group_idx_t nodeGroupIdx,
+        common::offset_t maxIndex, std::optional<StorageValue> min,
+        std::optional<StorageValue> max);
 
 private:
     bool isInsertionsOutOfPagesCapacity(const ColumnChunkMetadata& metadata,
