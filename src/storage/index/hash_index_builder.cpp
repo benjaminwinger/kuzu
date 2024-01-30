@@ -1,11 +1,11 @@
 #include "storage/index/hash_index_builder.h"
 
 #include <cstring>
-#include <optional>
 
 #include "common/type_utils.h"
 #include "common/types/ku_string.h"
 #include "common/types/types.h"
+#include "storage/index/base_hash_index.h"
 #include "storage/storage_structure/in_mem_file.h"
 
 using namespace kuzu::common;
@@ -49,23 +49,25 @@ void HashIndexBuilder<T, S>::bulkReserve(uint32_t numEntries_) {
 
 template<typename T, typename S>
 bool HashIndexBuilder<T, S>::append(T key, offset_t value) {
-    SlotInfo pSlotInfo{this->getPrimarySlotIdForKey(*this->indexHeader, key), SlotType::PRIMARY};
-    auto currentSlotInfo = pSlotInfo;
-    Slot<S>* currentSlot = nullptr;
-    while (currentSlotInfo.slotType == SlotType::PRIMARY || currentSlotInfo.slotId != 0) {
-        currentSlot = getSlot(currentSlotInfo);
-        if (lookupOrExistsInSlotWithoutLock<false /* exists */>(currentSlot, key)) {
-            // Key already exists. No append is allowed.
-            return false;
-        }
-        if (currentSlot->header.numEntries < slotCapacity) {
-            break;
-        }
-        currentSlotInfo.slotId = currentSlot->header.nextOvfSlotId;
-        currentSlotInfo.slotType = SlotType::OVF;
+    auto slotID = this->getPrimarySlotIdForKey(*this->indexHeader, key);
+    SlotInfo slotInfo{slotID, SlotType::PRIMARY};
+    offset_t result;
+    if (BaseHashIndex<T, S>::template performActionInChainedSlots<
+            ChainedSlotsAction::EXISTS_IN_SLOTS>(
+            transaction::TransactionType::READ_ONLY, *this->indexHeader, slotInfo, key, result)) {
+        return false;
     }
-    KU_ASSERT(currentSlot);
-    insertToSlotWithoutLock(currentSlot, key, value);
+    slot_id_t numRequiredEntries = this->getNumRequiredEntries(numEntries, 1);
+    while (numRequiredEntries > pSlots->getNumElements() * this->slotCapacity) {
+        this->splitSlot(*this->indexHeader);
+    }
+    // Reset slotInfo since performActionInChainedSlots modifies it when searching
+    slotInfo = {slotID, SlotType::PRIMARY};
+    BaseHashIndex<T, S>::template performActionInChainedSlots<ChainedSlotsAction::FIND_FREE_SLOT>(
+        transaction::TransactionType::WRITE, *this->indexHeader, slotInfo, key, result);
+    Slot<S>* slot = getSlot(slotInfo);
+    BaseHashIndex<T, S>::template copyKVOrEntryToSlot<T, false /* insert kv */>(
+        slotInfo, *slot, key, value);
     numEntries.fetch_add(1);
     return true;
 }
@@ -73,17 +75,9 @@ bool HashIndexBuilder<T, S>::append(T key, offset_t value) {
 template<typename T, typename S>
 bool HashIndexBuilder<T, S>::lookup(T key, offset_t& result) {
     SlotInfo pSlotInfo{this->getPrimarySlotIdForKey(*this->indexHeader, key), SlotType::PRIMARY};
-    SlotInfo currentSlotInfo = pSlotInfo;
-    Slot<S>* currentSlot;
-    while (currentSlotInfo.slotType == SlotType::PRIMARY || currentSlotInfo.slotId != 0) {
-        currentSlot = getSlot(currentSlotInfo);
-        if (lookupOrExistsInSlotWithoutLock<true /* lookup */>(currentSlot, key, &result)) {
-            return true;
-        }
-        currentSlotInfo.slotId = currentSlot->header.nextOvfSlotId;
-        currentSlotInfo.slotType = SlotType::OVF;
-    }
-    return false;
+    return BaseHashIndex<T, S>::template performActionInChainedSlots<
+        ChainedSlotsAction::LOOKUP_IN_SLOTS>(
+        transaction::TransactionType::READ_ONLY, *this->indexHeader, pSlotInfo, key, result);
 }
 
 template<typename T, typename S>
@@ -112,48 +106,6 @@ Slot<S>* HashIndexBuilder<T, S>::getSlot(const SlotInfo& slotInfo) {
 }
 
 template<typename T, typename S>
-template<bool IS_LOOKUP>
-bool HashIndexBuilder<T, S>::lookupOrExistsInSlotWithoutLock(
-    Slot<S>* slot, T key, offset_t* result) {
-    auto guard = inMemOverflowFile ?
-                     std::make_optional<MutexGuard<InMemFile>>(inMemOverflowFile->lock()) :
-                     std::nullopt;
-    auto memFile = guard ? guard->get() : nullptr;
-    for (auto entryPos = 0u; entryPos < slot->header.numEntries; entryPos++) {
-        auto& entry = slot->entries[entryPos];
-        if (this->equals(key, *(S*)entry.data, memFile)) {
-            if constexpr (IS_LOOKUP) {
-                memcpy(result, entry.data + this->indexHeader->numBytesPerKey, sizeof(offset_t));
-            }
-            return true;
-        }
-    }
-    return false;
-}
-
-template<typename T, typename S>
-void HashIndexBuilder<T, S>::insertToSlotWithoutLock(Slot<S>* slot, T key, offset_t value) {
-    if (slot->header.numEntries == slotCapacity) {
-        // Allocate a new oSlot and change the nextOvfSlotId.
-        auto ovfSlotId = allocateAOSlot();
-        slot->header.nextOvfSlotId = ovfSlotId;
-        slot = getSlot(SlotInfo{ovfSlotId, SlotType::OVF});
-    }
-    auto guard = inMemOverflowFile ?
-                     std::make_optional<MutexGuard<InMemFile>>(inMemOverflowFile->lock()) :
-                     std::nullopt;
-    auto memFile = guard ? guard->get() : nullptr;
-    for (auto entryPos = 0u; entryPos < slotCapacity; entryPos++) {
-        if (!slot->header.isEntryValid(entryPos)) {
-            insertNoGuard(key, slot->entries[entryPos].data, value, memFile);
-            slot->header.setEntryValid(entryPos);
-            slot->header.numEntries++;
-            break;
-        }
-    }
-}
-
-template<typename T, typename S>
 void HashIndexBuilder<T, S>::flush() {
     this->indexHeader->numEntries = numEntries.load();
     headerArray->resize(1, true /* setToZero */);
@@ -161,7 +113,7 @@ void HashIndexBuilder<T, S>::flush() {
     headerArray->saveToDisk();
     pSlots->saveToDisk();
     oSlots->saveToDisk();
-    if (this->indexHeader->keyDataTypeID == PhysicalTypeID::STRING) {
+    if constexpr (std::is_same_v<S, ku_string_t>) {
         auto guard = inMemOverflowFile->lock();
         guard->flush();
     }
@@ -172,14 +124,6 @@ void HashIndexBuilder<std::string_view, ku_string_t>::insert(
     std::string_view key, uint8_t* entry, offset_t offset) {
     auto guard = inMemOverflowFile->lock();
     auto kuString = guard->appendString(key);
-    memcpy(entry, &kuString, NUM_BYTES_FOR_STRING_KEY);
-    memcpy(entry + NUM_BYTES_FOR_STRING_KEY, &offset, sizeof(common::offset_t));
-}
-
-template<>
-void HashIndexBuilder<std::string_view, ku_string_t>::insertNoGuard(
-    std::string_view key, uint8_t* entry, offset_t offset, InMemFile* inMemOverflowFile) {
-    auto kuString = inMemOverflowFile->appendString(key);
     memcpy(entry, &kuString, NUM_BYTES_FOR_STRING_KEY);
     memcpy(entry + NUM_BYTES_FOR_STRING_KEY, &offset, sizeof(common::offset_t));
 }
@@ -200,7 +144,7 @@ common::hash_t HashIndexBuilder<std::string_view, ku_string_t>::hashStored(
 
 template<>
 bool HashIndexBuilder<std::string_view, ku_string_t>::equals(std::string_view keyToLookup,
-    const ku_string_t& keyInEntry, const InMemFile* inMemOverflowFile) {
+    const ku_string_t& keyInEntry, const InMemFile* inMemOverflowFile) const {
     // Checks if prefix and len matches first.
     if (!HashIndexUtils::areStringPrefixAndLenEqual(keyToLookup, keyInEntry)) {
         return false;
@@ -286,6 +230,24 @@ void PrimaryKeyIndexBuilder::flush() {
     for (auto i = 0u; i < NUM_HASH_INDEXES; i++) {
         hashIndexBuilders[i]->flush();
     }
+}
+
+template<typename T, typename S>
+entry_pos_t HashIndexBuilder<T, S>::findMatchedEntryInSlot(
+    transaction::TransactionType /*trxType*/, const Slot<S>& slot, T key) const {
+    auto guard = inMemOverflowFile ?
+                     std::make_optional<common::MutexGuard<InMemFile>>(inMemOverflowFile->lock()) :
+                     std::nullopt;
+    auto memFile = guard ? guard->get() : nullptr;
+    for (auto entryPos = 0u; entryPos < this->slotCapacity; entryPos++) {
+        if (!slot.header.isEntryValid(entryPos)) {
+            continue;
+        }
+        if (equals(key, *(S*)slot.entries[entryPos].data, memFile)) {
+            return entryPos;
+        }
+    }
+    return SlotHeader::INVALID_ENTRY_POS;
 }
 
 } // namespace storage

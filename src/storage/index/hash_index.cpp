@@ -171,45 +171,14 @@ bool HashIndex<T, S>::insertInternal(T key, offset_t value) {
 }
 
 template<typename T, typename S>
-template<ChainedSlotsAction action>
-bool HashIndex<T, S>::performActionInChainedSlots(
-    TransactionType trxType, HashIndexHeader& header, SlotInfo& slotInfo, T key, offset_t& result) {
-    while (slotInfo.slotType == SlotType::PRIMARY || slotInfo.slotId != 0) {
-        auto slot = getSlot(trxType, slotInfo);
-        if constexpr (action == ChainedSlotsAction::FIND_FREE_SLOT) {
-            if (slot.header.numEntries < this->slotCapacity || slot.header.nextOvfSlotId == 0) {
-                // Found a slot with empty space.
-                break;
-            }
-        } else {
-            auto entryPos = findMatchedEntryInSlot(trxType, slot, key);
-            if (entryPos != SlotHeader::INVALID_ENTRY_POS) {
-                if constexpr (action == ChainedSlotsAction::LOOKUP_IN_SLOTS) {
-                    result = *(
-                        offset_t*)(slot.entries[entryPos].data + this->indexHeader->numBytesPerKey);
-                } else if constexpr (action == ChainedSlotsAction::DELETE_IN_SLOTS) {
-                    slot.header.setEntryInvalid(entryPos);
-                    slot.header.numEntries--;
-                    updateSlot(slotInfo, slot);
-                    header.numEntries--;
-                }
-                return true;
-            }
-        }
-        slotInfo.slotId = slot.header.nextOvfSlotId;
-        slotInfo.slotType = SlotType::OVF;
-    }
-    return false;
-}
-
-template<typename T, typename S>
 bool HashIndex<T, S>::lookupInPersistentIndex(TransactionType trxType, T key, offset_t& result) {
     auto header = trxType == TransactionType::READ_ONLY ?
                       *this->indexHeader :
                       headerArray->get(INDEX_HEADER_IDX_IN_ARRAY, TransactionType::WRITE);
     SlotInfo slotInfo{this->getPrimarySlotIdForKey(header, key), SlotType::PRIMARY};
-    return performActionInChainedSlots<ChainedSlotsAction::LOOKUP_IN_SLOTS>(
-        trxType, header, slotInfo, key, result);
+    return BaseHashIndex<T,
+        S>::template performActionInChainedSlots<ChainedSlotsAction::LOOKUP_IN_SLOTS>(trxType,
+        header, slotInfo, key, result);
 }
 
 template<typename T, typename S>
@@ -223,7 +192,7 @@ void HashIndex<T, S>::insertIntoPersistentIndex(T key, offset_t value) {
     auto pSlotId = this->getPrimarySlotIdForKey(header, key);
     SlotInfo slotInfo{pSlotId, SlotType::PRIMARY};
     offset_t result;
-    performActionInChainedSlots<ChainedSlotsAction::FIND_FREE_SLOT>(
+    BaseHashIndex<T, S>::template performActionInChainedSlots<ChainedSlotsAction::FIND_FREE_SLOT>(
         TransactionType::WRITE, header, slotInfo, key, result);
     Slot slot = getSlot(TransactionType::WRITE, slotInfo);
     BaseHashIndex<T, S>::template copyKVOrEntryToSlot<T, false /* insert kv */>(
@@ -237,7 +206,7 @@ void HashIndex<T, S>::deleteFromPersistentIndex(T key) {
     auto header = headerArray->get(INDEX_HEADER_IDX_IN_ARRAY, TransactionType::WRITE);
     SlotInfo slotInfo{this->getPrimarySlotIdForKey(header, key), SlotType::PRIMARY};
     offset_t result;
-    performActionInChainedSlots<ChainedSlotsAction::DELETE_IN_SLOTS>(
+    BaseHashIndex<T, S>::template performActionInChainedSlots<ChainedSlotsAction::DELETE_IN_SLOTS>(
         TransactionType::WRITE, header, slotInfo, key, result);
     headerArray->update(INDEX_HEADER_IDX_IN_ARRAY, header);
 }

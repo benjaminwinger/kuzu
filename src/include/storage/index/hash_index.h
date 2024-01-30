@@ -67,9 +67,6 @@ public:
     inline BMFileHandle* getFileHandle() const { return fileHandle.get(); }
 
 private:
-    template<ChainedSlotsAction action>
-    bool performActionInChainedSlots(transaction::TransactionType trxType, HashIndexHeader& header,
-        SlotInfo& slotInfo, T key, common::offset_t& result);
     bool lookupInPersistentIndex(
         transaction::TransactionType trxType, T key, common::offset_t& result);
     // The following two functions are only used in prepareCommit, and are not thread-safe.
@@ -77,7 +74,7 @@ private:
     void deleteFromPersistentIndex(T key);
 
     entry_pos_t findMatchedEntryInSlot(
-        transaction::TransactionType trxType, const Slot<S>& slot, T key) const;
+        transaction::TransactionType trxType, const Slot<S>& slot, T key) const override;
 
     inline void updateSlot(const SlotInfo& slotInfo, const Slot<S>& slot) override {
         slotInfo.slotType == SlotType::PRIMARY ? pSlots->update(slotInfo.slotId, slot) :
@@ -96,12 +93,11 @@ private:
         return oSlots->pushBack(newSlot);
     }
 
+    // Overridden so that we can specialize for strings
     inline bool equals(
         transaction::TransactionType /*trxType*/, T keyToLookup, const S& keyInEntry) const {
         return keyToLookup == keyInEntry;
     }
-
-    // Overridden so that we can specialize for strings
     inline void insert(T key, uint8_t* entry, common::offset_t offset) override {
         return BaseHashIndex<T, S>::insert(key, entry, offset);
     }
@@ -129,6 +125,11 @@ private:
 template<>
 common::hash_t HashIndex<std::string_view, common::ku_string_t>::hashStored(
     transaction::TransactionType /*trxType*/, const common::ku_string_t& key) const;
+
+template<>
+inline bool HashIndex<std::string_view, common::ku_string_t>::equals(
+    transaction::TransactionType trxType, std::string_view keyToLookup,
+    const common::ku_string_t& keyInEntry) const;
 
 class PrimaryKeyIndex {
 public:

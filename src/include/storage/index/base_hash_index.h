@@ -12,7 +12,12 @@
 namespace kuzu {
 namespace storage {
 
-enum class ChainedSlotsAction : uint8_t { LOOKUP_IN_SLOTS, DELETE_IN_SLOTS, FIND_FREE_SLOT };
+enum class ChainedSlotsAction : uint8_t {
+    EXISTS_IN_SLOTS,
+    LOOKUP_IN_SLOTS,
+    DELETE_IN_SLOTS,
+    FIND_FREE_SLOT
+};
 
 enum class SlotType : uint8_t { PRIMARY = 0, OVF = 1 };
 
@@ -88,6 +93,40 @@ protected:
         }
         slot.header.setEntryValid(entryPos);
         slot.header.numEntries++;
+    }
+
+    virtual entry_pos_t findMatchedEntryInSlot(
+        transaction::TransactionType trxType, const Slot<S>& slot, T key) const = 0;
+
+    template<ChainedSlotsAction action>
+    bool performActionInChainedSlots(transaction::TransactionType trxType, HashIndexHeader& header,
+        SlotInfo& slotInfo, T key, common::offset_t& result) {
+        while (slotInfo.slotType == SlotType::PRIMARY || slotInfo.slotId != 0) {
+            auto slot = getSlot(trxType, slotInfo);
+            if constexpr (action == ChainedSlotsAction::FIND_FREE_SLOT) {
+                if (slot.header.numEntries < this->slotCapacity || slot.header.nextOvfSlotId == 0) {
+                    // Found a slot with empty space.
+                    break;
+                }
+            } else {
+                auto entryPos = findMatchedEntryInSlot(trxType, slot, key);
+                if (entryPos != SlotHeader::INVALID_ENTRY_POS) {
+                    if constexpr (action == ChainedSlotsAction::LOOKUP_IN_SLOTS) {
+                        result = *(common::offset_t*)(slot.entries[entryPos].data +
+                                                      this->indexHeader->numBytesPerKey);
+                    } else if constexpr (action == ChainedSlotsAction::DELETE_IN_SLOTS) {
+                        slot.header.setEntryInvalid(entryPos);
+                        slot.header.numEntries--;
+                        updateSlot(slotInfo, slot);
+                        header.numEntries--;
+                    }
+                    return true;
+                }
+            }
+            slotInfo.slotId = slot.header.nextOvfSlotId;
+            slotInfo.slotType = SlotType::OVF;
+        }
+        return false;
     }
 
     inline common::hash_t hash(const T& key) const {

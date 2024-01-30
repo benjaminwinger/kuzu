@@ -66,9 +66,6 @@ public:
     void flush() override;
 
 private:
-    template<bool IS_LOOKUP>
-    bool lookupOrExistsInSlotWithoutLock(Slot<S>* slot, T key, common::offset_t* result = nullptr);
-    void insertToSlotWithoutLock(Slot<S>* slot, T key, common::offset_t value);
     Slot<S>* getSlot(const SlotInfo& slotInfo);
 
     inline Slot<S> getSlot(
@@ -87,7 +84,8 @@ private:
         return index;
     }
 
-    inline bool equals(T keyToLookup, const S& keyInEntry, const InMemFile* /*inMemOverflowFile*/) {
+    inline bool equals(
+        T keyToLookup, const S& keyInEntry, const InMemFile* /*inMemOverflowFile*/) const {
         return keyToLookup == keyInEntry;
     }
 
@@ -97,10 +95,9 @@ private:
     }
     common::hash_t hashStored(
         transaction::TransactionType /*trxType*/, const S& key) const override;
-    void insertNoGuard(
-        T key, uint8_t* entry, common::offset_t offset, InMemFile* /*inMemOverflowFile*/) {
-        insert(key, entry, offset);
-    }
+
+    entry_pos_t findMatchedEntryInSlot(
+        transaction::TransactionType /*trxType*/, const Slot<S>& slot, T key) const override;
 
 private:
     std::shared_ptr<FileHandle> fileHandle;
@@ -113,6 +110,10 @@ private:
     uint8_t slotCapacity;
     std::atomic<uint64_t> numEntries;
 };
+
+template<>
+bool HashIndexBuilder<std::string_view, common::ku_string_t>::equals(std::string_view keyToLookup,
+    const common::ku_string_t& keyInEntry, const InMemFile* inMemOverflowFile) const;
 
 class PrimaryKeyIndexBuilder {
 public:
