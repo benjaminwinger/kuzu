@@ -32,15 +32,14 @@ public:
     uint64_t append(const std::vector<common::ValueVector*>& columnVectors,
         common::DataChunkState* columnState, uint64_t numValuesToAppend);
     common::offset_t append(NodeGroup* other, common::offset_t offsetInOtherNodeGroup);
-    void write(common::DataChunk* dataChunk, common::vector_idx_t offsetVector);
+    void write(std::vector<std::unique_ptr<ColumnChunk>>& data, common::vector_idx_t offsetVector);
 
     void finalize(uint64_t nodeGroupIdx_);
 
     virtual inline void writeToColumnChunk(common::vector_idx_t chunkIdx,
-        common::vector_idx_t vectorIdx, common::DataChunk* dataChunk,
-        common::ValueVector* offsetVector) {
-        chunks[chunkIdx]->write(
-            dataChunk->getValueVector(vectorIdx).get(), offsetVector, false /* isCSR */);
+        common::vector_idx_t vectorIdx, std::vector<std::unique_ptr<ColumnChunk>>& data,
+        ColumnChunk& offsetChunk) {
+        chunks[chunkIdx]->write(data[vectorIdx].get(), &offsetChunk, false /*isCSR*/);
     }
 
 protected:
@@ -81,9 +80,8 @@ public:
     const CSRHeaderChunks& getCSRHeader() const { return csrHeaderChunks; }
 
     inline void writeToColumnChunk(common::vector_idx_t chunkIdx, common::vector_idx_t vectorIdx,
-        common::DataChunk* dataChunk, common::ValueVector* offsetVector) override {
-        chunks[chunkIdx]->write(
-            dataChunk->getValueVector(vectorIdx).get(), offsetVector, true /* isCSR */);
+        std::vector<std::unique_ptr<ColumnChunk>>& data, ColumnChunk& offsetChunk) override {
+        chunks[chunkIdx]->write(data[vectorIdx].get(), &offsetChunk, true /* isCSR */);
     }
 
 private:

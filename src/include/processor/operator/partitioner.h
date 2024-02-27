@@ -1,7 +1,7 @@
 #pragma once
 
-#include "common/data_chunk/data_chunk_collection.h"
 #include "processor/operator/sink.h"
+#include "storage/store/column_chunk.h"
 
 namespace kuzu {
 namespace storage {
@@ -20,7 +20,13 @@ struct PartitionerFunctions {
 // partitioning methods. For example, copy of rel tables require partitioning on both FWD and BWD
 // direction. Each partitioning method corresponds to a PartitioningState.
 struct PartitioningBuffer {
-    std::vector<std::unique_ptr<common::DataChunkCollection>> partitions;
+    struct NodeGroup {
+        // One chunk for each column, grouped into a list
+        // so that groups from different threads can be quickly merged without copying
+        // E.g. [(a,b,c), (a,b,c)] where a is a chunk for column a, b for column b, etc.
+        std::vector<std::vector<std::unique_ptr<storage::ColumnChunk>>> chunks;
+    };
+    std::vector<NodeGroup> partitions;
 
     void merge(std::unique_ptr<PartitioningBuffer> localPartitioningStates);
 };
@@ -49,11 +55,11 @@ struct PartitionerSharedState {
     void resetState();
     void merge(std::vector<std::unique_ptr<PartitioningBuffer>> localPartitioningStates);
 
-    inline common::DataChunkCollection* getPartitionBuffer(
+    inline PartitioningBuffer::NodeGroup& getPartitionBuffer(
         common::vector_idx_t partitioningIdx, common::partition_idx_t partitionIdx) {
         KU_ASSERT(partitioningIdx < partitioningBuffers.size());
         KU_ASSERT(partitionIdx < partitioningBuffers[partitioningIdx]->partitions.size());
-        return partitioningBuffers[partitioningIdx]->partitions[partitionIdx].get();
+        return partitioningBuffers[partitioningIdx]->partitions[partitionIdx];
     }
 };
 
@@ -102,7 +108,7 @@ public:
 
     static void initializePartitioningStates(
         std::vector<std::unique_ptr<PartitioningBuffer>>& partitioningBuffers,
-        std::vector<common::partition_idx_t> numPartitions, storage::MemoryManager* mm);
+        std::vector<common::partition_idx_t> numPartitions);
 
 private:
     // TODO: For now, RelBatchInsert will guarantee all data are inside one data chunk. Should be
