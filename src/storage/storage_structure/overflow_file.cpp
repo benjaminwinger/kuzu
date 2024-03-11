@@ -195,8 +195,12 @@ void OverflowFile::readFromDisk(transaction::TransactionType trxType, common::pa
 
 void OverflowFile::writePageToDisk(common::page_idx_t pageIdx, uint8_t* data) const {
     if (pageIdx < numPagesOnDisk) {
-        // TODO: updatePage does an unnecessary read + copy. We just want to overwrite
-        DBFileUtils::updatePage(*getBMFileHandle(), dbFileID, pageIdx, false, *bufferManager, *wal,
+        // insertingNewPage is set to true even though it's not a new page since this writes the
+        // whole page at once; there's no need to read the original
+        // TODO(bmwinger): update the argument name to make this sort of usage more clear. We don't
+        // want this to break in future if the scope of insertingNewPage changes
+        DBFileUtils::updatePage(*getBMFileHandle(), dbFileID, pageIdx, true /*insertingNewPage*/,
+            *bufferManager, *wal,
             [&](auto* frame) { memcpy(frame, data, BufferPoolConstants::PAGE_4KB_SIZE); });
     } else {
         fileHandle->writePage(data, pageIdx);
