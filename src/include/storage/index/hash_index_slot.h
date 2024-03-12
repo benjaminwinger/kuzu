@@ -49,7 +49,8 @@ public:
 
 template<typename T>
 struct SlotEntry {
-    uint8_t data[sizeof(T) + sizeof(common::offset_t)];
+    T key;
+    common::offset_t value;
 };
 
 template<typename T>
