@@ -208,9 +208,7 @@ void OverflowFile::prepareCommit() {
     if (fileHandle->getNumPages() < pageCounter) {
         fileHandle->addNewPages(pageCounter - fileHandle->getNumPages());
     }
-    // TODO(bmwinger): Ideally this could be done separately and in parallel by each HashIndex
-    // However fileHandle->addNewPages needs to be called beforehand,
-    // but after each HashIndex::prepareCommit has written to the in-memory pages
+#pragma omp parallel for
     for (auto& handle : handles) {
         handle->prepareCommit();
     }

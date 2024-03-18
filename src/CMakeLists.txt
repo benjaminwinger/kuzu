@@ -3,6 +3,11 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 # Have to pass this down to every subdirectory, which actually adds the files.
 # This doesn't affect parent directories.
 add_compile_definitions(KUZU_EXPORTS)
+# For some reason the flags pulled in by linking to OpenMP::OpenMP_CXX don't
+# work properly
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 add_subdirectory(binder)
 add_subdirectory(c_api)
 add_subdirectory(catalog)
@@ -21,7 +26,7 @@ add_subdirectory(extension)
 add_library(kuzu STATIC ${ALL_OBJECT_FILES})
 add_library(kuzu_shared SHARED ${ALL_OBJECT_FILES})
 
-set(KUZU_LIBRARIES antlr4_cypher antlr4_runtime brotlidec brotlicommon fast_float utf8proc re2 serd Threads::Threads fastpfor miniparquet zstd miniz mbedtls)
+set(KUZU_LIBRARIES antlr4_cypher antlr4_runtime brotlidec brotlicommon fast_float utf8proc re2 serd Threads::Threads fastpfor miniparquet zstd miniz mbedtls OpenMP::OpenMP_CXX)
 if(NOT WIN32)
         set(KUZU_LIBRARIES dl ${KUZU_LIBRARIES})
 endif()
