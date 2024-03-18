@@ -134,6 +134,11 @@ public:
     }
 
 protected:
+    // Updates to new pages (new to this transaction) bypass the wal file.
+    void updatePage(uint64_t pageIdx, bool isNewPage, std::function<void(uint8_t*)> updateOp);
+
+    void updateLastPageOnDisk();
+
     uint64_t pushBackNoLock(std::span<uint8_t> val);
 
     uint64_t getNumElementsNoLock(transaction::TransactionType trxType);
@@ -190,6 +195,7 @@ protected:
     std::vector<PIPWrapper> pips;
     PIPUpdates pipUpdates;
     std::shared_mutex diskArraySharedMtx;
+    common::page_idx_t lastPageOnDisk;
 };
 
 template<typename U>
