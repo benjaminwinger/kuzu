@@ -2,7 +2,9 @@
 
 #include <cstdint>
 
+#include "common/cast.h"
 #include "common/constants.h"
+#include "common/copy_constructors.h"
 #include "common/types/types.h"
 #include "db_file_utils.h"
 #include "storage/buffer_manager/bm_file_handle.h"
@@ -133,6 +135,74 @@ public:
         checkpointOrRollbackInMemoryIfNecessaryNoLock(false /* is rollback */);
     }
 
+    // TODO: instead of updating elements individually, allow updating through the iterator
+    struct iterator {
+        BaseDiskArrayInternal& diskArray;
+        PageCursor apCursor;
+        uint32_t valueSize;
+        WALPageIdxAndFrame walPageIdxAndFrame;
+        static const transaction::TransactionType TRX_TYPE = transaction::TransactionType::WRITE;
+        uint64_t idx;
+        uint64_t numElements;
+        std::unique_lock<std::shared_mutex> lock;
+        DEFAULT_BOTH_MOVE(iterator);
+
+        // TODO: Move initial read of out the constructor and require that seek is called before
+        // access
+        iterator(uint64_t idx, uint32_t valueSize, BaseDiskArrayInternal& diskArray,
+            std::unique_lock<std::shared_mutex>&& lock)
+            : diskArray(diskArray), apCursor(diskArray.getAPIdxAndOffsetInAP(idx)),
+              valueSize(valueSize),
+              walPageIdxAndFrame(DBFileUtils::createWALVersionIfNecessaryAndPinPage(
+                  diskArray.getAPPageIdxNoLock(apCursor.pageIdx, TRX_TYPE), false,
+                  (BMFileHandle&)diskArray.fileHandle, diskArray.dbFileID, *diskArray.bufferManager,
+                  *diskArray.wal)),
+              idx(idx), numElements(diskArray.getNumElementsNoLock(TRX_TYPE)),
+              lock(std::move(lock)) {}
+
+        inline iterator& seek(size_t newIdx) {
+            auto originalPageIdx = apCursor.pageIdx;
+            idx = newIdx;
+            apCursor = diskArray.getAPIdxAndOffsetInAP(idx);
+            if (originalPageIdx != apCursor.pageIdx && idx < numElements) {
+                // unpin current page
+                diskArray.bufferManager->unpin(
+                    *diskArray.wal->fileHandle, walPageIdxAndFrame.pageIdxInWAL);
+                common::ku_dynamic_cast<FileHandle&, BMFileHandle&>(diskArray.fileHandle)
+                    .releaseWALPageIdxLock(walPageIdxAndFrame.originalPageIdx);
+                // Pin new page
+                common::page_idx_t apPageIdx =
+                    diskArray.getAPPageIdxNoLock(apCursor.pageIdx, TRX_TYPE);
+                walPageIdxAndFrame = DBFileUtils::createWALVersionIfNecessaryAndPinPage(apPageIdx,
+                    false, (BMFileHandle&)diskArray.fileHandle, diskArray.dbFileID,
+                    *diskArray.bufferManager, *diskArray.wal);
+            }
+            return *this;
+        }
+
+        inline iterator& operator+=(size_t increment) { return seek(idx + increment); }
+
+        ~iterator() {
+            // TODO(bmwinger): this should be moved into WALPageIdxAndFrame
+            diskArray.bufferManager->unpin(
+                *diskArray.wal->fileHandle, walPageIdxAndFrame.pageIdxInWAL);
+            common::ku_dynamic_cast<FileHandle&, BMFileHandle&>(diskArray.fileHandle)
+                .releaseWALPageIdxLock(walPageIdxAndFrame.originalPageIdx);
+        }
+
+        // Iterator is necessarily locked, so we can't produce other iterators to compare to with
+        // the normal begin/end pattern That said, this is only used by the hash index at the
+        // moment, which doesn't need locking, but it's better that it is safe in other contexts.
+        inline bool hasNext() const { return idx < numElements - 1; }
+
+        std::span<uint8_t> operator*() const {
+            KU_ASSERT(idx < numElements);
+            return std::span(walPageIdxAndFrame.frame + apCursor.elemPosInPage, valueSize);
+        }
+    };
+
+    iterator iter(uint64_t valueSize);
+
 protected:
     uint64_t pushBackNoLock(std::span<uint8_t> val);
 
@@ -234,6 +304,32 @@ public:
 
     inline void checkpointInMemoryIfNecessary() { diskArray.checkpointInMemoryIfNecessary(); }
     inline void rollbackInMemoryIfNecessary() { diskArray.rollbackInMemoryIfNecessary(); }
+
+    class iterator {
+    public:
+        explicit iterator(BaseDiskArrayInternal::iterator&& iter) : iter(std::move(iter)) {}
+        inline U& operator*() { return *reinterpret_cast<U*>((*iter).data()); }
+        DELETE_COPY_DEFAULT_MOVE(iterator);
+
+        inline iterator& operator+=(size_t dist) {
+            iter += dist;
+            return *this;
+        }
+
+        inline iterator& seek(size_t idx) {
+            iter.seek(idx);
+            return *this;
+        }
+
+        inline bool hasNext() { return this->iter.hasNext(); }
+
+        inline uint64_t idx() const { return this->iter.idx; }
+
+    private:
+        BaseDiskArrayInternal::iterator iter;
+    };
+
+    inline iterator iter() { return iterator{diskArray.iter(sizeof(U))}; }
 
 private:
     BaseDiskArrayInternal diskArray;

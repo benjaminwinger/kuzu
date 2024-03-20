@@ -1,8 +1,11 @@
 #include "storage/storage_structure/disk_array.h"
 
 #include "common/cast.h"
+#include "common/constants.h"
 #include "common/string_format.h"
 #include "common/utils.h"
+#include "storage/storage_structure/db_file_utils.h"
+#include "storage/storage_utils.h"
 
 using namespace kuzu::common;
 using namespace kuzu::transaction;
@@ -334,6 +337,11 @@ BaseDiskArrayInternal::getAPPageIdxAndAddAPToPIPIfNecessaryForWriteTrxNoLock(
             });
         return std::make_pair(newAPPageIdx, true /* inserting a new ap page */);
     }
+}
+
+BaseDiskArrayInternal::iterator BaseDiskArrayInternal::iter(uint64_t valueSize) {
+    std::unique_lock xLck{diskArraySharedMtx};
+    return BaseDiskArrayInternal::iterator(0, valueSize, *this, std::move(xLck));
 }
 
 BaseInMemDiskArray::BaseInMemDiskArray(FileHandle& fileHandle, DBFileID dbFileID,

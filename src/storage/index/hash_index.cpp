@@ -452,6 +452,17 @@ void HashIndex<T>::mergeBulkInserts() {
     // temporary vector buffers instead of slots for improved performance) and then merge each of
     // those one at a time into the disk slots. That will keep the low memory requirements and still
     // let us update each on-disk slot one at a time.
+
+    // TODO: Also use an iterator for the overflow disk slot in case they are adjacent. It should be
+    // possible to support backwards seeking That will also handle updates, but it may be difficult
+    // to also handle appends (ideally we can append to the current cached frame if possible, and
+    // update the header just once at the end in the destructor instead of after each pushback
+    // TODO: This will write to the WAL file for every slot visited (and always the first one)
+    // If the primary slot is already full, it will not need to be written,
+    // but we would only want to skip the write if no primary slots on the page are modified
+    // It may be faster just to assume we will write, since after the reserve there should generally
+    // be sufficient space
+    auto diskSlotIterator = pSlots->iter();
     for (uint64_t slotId = 0; slotId < bulkInsertLocalStorage.pSlots.size(); slotId++) {
         auto localSlot =
             typename HashIndexBuilder<T>::SlotIterator(slotId, &bulkInsertLocalStorage);
@@ -461,58 +472,67 @@ void HashIndex<T>::mergeBulkInserts() {
             // builder
             continue;
         }
-        auto diskSlot = getSlotIterator(slotId, TransactionType::WRITE);
+        // Skip slots which were empty in the local storage
+        diskSlotIterator.seek(slotId);
         bool isNewDiskSlot = false;
         bool diskSlotChanged = false;
         slot_id_t diskEntryPos = 0u;
+        auto& diskSlot = *diskSlotIterator;
+        std::optional<SlotIterator> overflowDiskSlot;
         // Merge slot from local storage to existing slot
         // Values which need to be rehashed to a different slot get moved into local storage
         do {
             for (auto entryPos = 0u; entryPos < getSlotCapacity<T>(); entryPos++) {
                 if (localSlot.slot->header.isEntryValid(entryPos)) {
                     // Find the next empty entry, or add a new slot if there are no more entries
-                    while (diskSlot.slot.header.isEntryValid(diskEntryPos) ||
+                    while (diskSlot.header.isEntryValid(diskEntryPos) ||
                            diskEntryPos >= getSlotCapacity<T>()) {
                         diskEntryPos++;
                         if (diskEntryPos >= getSlotCapacity<T>()) {
                             // If there are no more disk slots in this chain, we need to add one
                             // To avoid updating the slot twice, use the current number of overflow
                             // slots as the next index to be added.
-                            auto originalNextOvfSlotId = diskSlot.slot.header.nextOvfSlotId;
+                            auto originalNextOvfSlotId = diskSlot.header.nextOvfSlotId;
                             if (originalNextOvfSlotId == 0) {
                                 // If it's a new disk slot, then it will be written to the end of
                                 // the overflow slots and we want the following slot id as the next
                                 // slot id
-                                diskSlot.slot.header.nextOvfSlotId =
+                                diskSlot.header.nextOvfSlotId =
                                     oSlots->getNumElements(TransactionType::WRITE) +
                                     (isNewDiskSlot ? 1 : 0);
-                                KU_ASSERT(diskSlot.slot.header.nextOvfSlotId !=
-                                              diskSlot.slotInfo.slotId ||
-                                          diskSlot.slotInfo.slotType != SlotType::OVF);
+                                KU_ASSERT(!overflowDiskSlot ||
+                                          overflowDiskSlot->slot.header.nextOvfSlotId !=
+                                              overflowDiskSlot->slotInfo.slotId);
                             }
-                            if (diskSlotChanged) {
+                            if (diskSlotChanged && overflowDiskSlot) {
                                 if (isNewDiskSlot) {
-                                    appendOverflowSlot(std::move(diskSlot.slot));
+                                    appendOverflowSlot(std::move(overflowDiskSlot->slot));
                                 } else {
-                                    updateSlot(diskSlot.slotInfo, diskSlot.slot);
+                                    updateSlot(overflowDiskSlot->slotInfo, overflowDiskSlot->slot);
                                 }
                             }
                             if (originalNextOvfSlotId == 0) {
-                                diskSlot.slot = Slot<T>();
-                                diskSlot.slotInfo = {
-                                    oSlots->getNumElements(TransactionType::WRITE), SlotType::OVF};
+                                overflowDiskSlot = std::optional(SlotIterator{
+                                    {oSlots->getNumElements(TransactionType::WRITE), SlotType::OVF},
+                                    Slot<T>()});
                                 // updateSlot will fail on new slots
                                 isNewDiskSlot = true;
+                            } else if (overflowDiskSlot) {
+                                nextChainedSlot(TransactionType::WRITE, *overflowDiskSlot);
+                                diskSlot = overflowDiskSlot->slot;
                             } else {
-                                nextChainedSlot(TransactionType::WRITE, diskSlot);
+                                SlotInfo slotInfo = {diskSlot.header.nextOvfSlotId, SlotType::OVF};
+                                overflowDiskSlot = std::optional(SlotIterator{
+                                    slotInfo, getSlot(TransactionType::WRITE, slotInfo)});
                             }
+                            diskSlot = overflowDiskSlot->slot;
                             diskSlotChanged = false;
                             diskEntryPos = 0;
                         }
                     }
                     diskSlotChanged = true;
                     KU_ASSERT(diskEntryPos < getSlotCapacity<T>());
-                    copyAndUpdateSlotHeader<const T&, true>(diskSlot.slot, diskEntryPos,
+                    copyAndUpdateSlotHeader<const T&, true>(diskSlot, diskEntryPos,
                         localSlot.slot->entries[entryPos].key, UINT32_MAX,
                         localSlot.slot->header.fingerprints[entryPos]);
                     /*auto hash =
@@ -527,11 +547,11 @@ void HashIndex<T>::mergeBulkInserts() {
                 }
             }
         } while (bulkInsertLocalStorage.nextChainedSlot(localSlot));
-        if (diskSlotChanged) {
+        if (diskSlotChanged && overflowDiskSlot) {
             if (isNewDiskSlot) {
-                appendOverflowSlot(std::move(diskSlot.slot));
+                appendOverflowSlot(std::move(overflowDiskSlot->slot));
             } else {
-                updateSlot(diskSlot.slotInfo, diskSlot.slot);
+                updateSlot(overflowDiskSlot->slotInfo, overflowDiskSlot->slot);
             }
         }
     }
