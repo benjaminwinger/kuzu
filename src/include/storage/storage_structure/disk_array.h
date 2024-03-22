@@ -135,69 +135,122 @@ public:
         checkpointOrRollbackInMemoryIfNecessaryNoLock(false /* is rollback */);
     }
 
-    // TODO: instead of updating elements individually, allow updating through the iterator
+    // Write iterator for making fast bulk changes to the disk array
+    // The header is only updated when the iterator goes out of scope, and the pages are cached
+    // while the elements are stored on the same page
+    // Designed for sequential writes, but supports random writes too (at the cost that the page
+    // caching is only beneficial when seeking from one element to another on the same page)
+    // TODO(bmwinger): The disk array in general could benefit from caching the last PIP and from
+    // caching the write header It would require adding a prepareCommit function to flush the cached
+    // values.
     struct iterator {
         BaseDiskArrayInternal& diskArray;
         PageCursor apCursor;
         uint32_t valueSize;
+        // TODO(bmwinger): Instead of pinning the page and updating in-place, it might be better to
+        // read and cache the page, then write the page to the WAL if it's ever modified. However
+        // when doing bulk hashindex inserts, there's a high likelihood that every page accessed
+        // will be modified, so it may be faster this way.
         WALPageIdxAndFrame walPageIdxAndFrame;
         static const transaction::TransactionType TRX_TYPE = transaction::TransactionType::WRITE;
         uint64_t idx;
-        uint64_t numElements;
+        uint64_t originalNumElements;
+        DiskArrayHeader header;
         std::unique_lock<std::shared_mutex> lock;
         DEFAULT_BOTH_MOVE(iterator);
 
-        // TODO: Move initial read of out the constructor and require that seek is called before
-        // access
-        iterator(uint64_t idx, uint32_t valueSize, BaseDiskArrayInternal& diskArray,
+        // Constructs iterator in an invalid state. Seek must be called before accessing data
+        iterator(uint32_t valueSize, BaseDiskArrayInternal& diskArray,
             std::unique_lock<std::shared_mutex>&& lock)
-            : diskArray(diskArray), apCursor(diskArray.getAPIdxAndOffsetInAP(idx)),
-              valueSize(valueSize),
-              walPageIdxAndFrame(DBFileUtils::createWALVersionIfNecessaryAndPinPage(
-                  diskArray.getAPPageIdxNoLock(apCursor.pageIdx, TRX_TYPE), false,
-                  (BMFileHandle&)diskArray.fileHandle, diskArray.dbFileID, *diskArray.bufferManager,
-                  *diskArray.wal)),
-              idx(idx), numElements(diskArray.getNumElementsNoLock(TRX_TYPE)),
-              lock(std::move(lock)) {}
+            : diskArray(diskArray), apCursor(),
+              valueSize(valueSize), walPageIdxAndFrame{common::INVALID_PAGE_IDX,
+                                        common::INVALID_PAGE_IDX, nullptr},
+              idx(0), originalNumElements(diskArray.getNumElementsNoLock(TRX_TYPE)),
+              lock(std::move(lock)) {
+            auto& bmFileHandle =
+                common::ku_dynamic_cast<FileHandle&, BMFileHandle&>(diskArray.fileHandle);
+            if (bmFileHandle.hasWALPageVersionNoWALPageIdxLock(diskArray.headerPageIdx)) {
+                DBFileUtils::readWALVersionOfPage(bmFileHandle, diskArray.headerPageIdx,
+                    *diskArray.bufferManager, *diskArray.wal,
+                    [&](auto* frame) { memcpy(&header, frame, sizeof(header)); });
+            } else {
+                header = diskArray.header;
+            }
+        }
 
         inline iterator& seek(size_t newIdx) {
             auto originalPageIdx = apCursor.pageIdx;
             idx = newIdx;
             apCursor = diskArray.getAPIdxAndOffsetInAP(idx);
-            if (originalPageIdx != apCursor.pageIdx && idx < numElements) {
-                // unpin current page
-                diskArray.bufferManager->unpin(
-                    *diskArray.wal->fileHandle, walPageIdxAndFrame.pageIdxInWAL);
-                common::ku_dynamic_cast<FileHandle&, BMFileHandle&>(diskArray.fileHandle)
-                    .releaseWALPageIdxLock(walPageIdxAndFrame.originalPageIdx);
-                // Pin new page
+            if (originalPageIdx != apCursor.pageIdx && idx < header.numElements) {
                 common::page_idx_t apPageIdx =
                     diskArray.getAPPageIdxNoLock(apCursor.pageIdx, TRX_TYPE);
-                walPageIdxAndFrame = DBFileUtils::createWALVersionIfNecessaryAndPinPage(apPageIdx,
-                    false, (BMFileHandle&)diskArray.fileHandle, diskArray.dbFileID,
-                    *diskArray.bufferManager, *diskArray.wal);
+                getPage(apPageIdx, false /*isNewlyAdded*/);
             }
             return *this;
+        }
+
+        inline void pushBack() {
+            idx = header.numElements++;
+            apCursor = diskArray.getAPIdxAndOffsetInAP(idx);
+            // If this would add a new page, pin new page and update PIP
+            // TODO(bmwinger): the PIP could also be cached to avoid updating it more frequently
+            // than necessary, which could reduce BM writes by almost half. Currently the BM is
+            // accessed once per new page and once to update the PIP, but we could reduce by only
+            // updating the PIP when the iterator is done or when we need to add a new PIP (which is
+            // much less frequently than once per new AP)
+            auto [apPageIdx, isNewlyAdded] =
+                diskArray.getAPPageIdxAndAddAPToPIPIfNecessaryForWriteTrxNoLock(
+                    &header, apCursor.pageIdx);
+            if (isNewlyAdded || walPageIdxAndFrame.originalPageIdx == common::INVALID_PAGE_IDX) {
+                getPage(apPageIdx, isNewlyAdded);
+            }
         }
 
         inline iterator& operator+=(size_t increment) { return seek(idx + increment); }
 
         ~iterator() {
-            // TODO(bmwinger): this should be moved into WALPageIdxAndFrame
-            diskArray.bufferManager->unpin(
-                *diskArray.wal->fileHandle, walPageIdxAndFrame.pageIdxInWAL);
-            common::ku_dynamic_cast<FileHandle&, BMFileHandle&>(diskArray.fileHandle)
-                .releaseWALPageIdxLock(walPageIdxAndFrame.originalPageIdx);
+            // TODO(bmwinger): this should be moved into WALPageIdxAndFrame's destructor (or
+            // something similar)
+            if (walPageIdxAndFrame.originalPageIdx != common::INVALID_PAGE_IDX) {
+                diskArray.bufferManager->unpin(
+                    *diskArray.wal->fileHandle, walPageIdxAndFrame.pageIdxInWAL);
+                common::ku_dynamic_cast<FileHandle&, BMFileHandle&>(diskArray.fileHandle)
+                    .releaseWALPageIdxLock(walPageIdxAndFrame.originalPageIdx);
+            }
+
+            // Update header if elements were added
+            if (header.numElements != originalNumElements) {
+                DBFileUtils::updatePage((BMFileHandle&)diskArray.fileHandle, diskArray.dbFileID,
+                    diskArray.headerPageIdx, false, *diskArray.bufferManager, *diskArray.wal,
+                    [&](auto* frame) { memcpy(frame, &header, sizeof(header)); });
+            }
         }
 
         // Iterator is necessarily locked, so we can't produce other iterators to compare to with
         // the normal begin/end pattern That said, this is only used by the hash index at the
         // moment, which doesn't need locking, but it's better that it is safe in other contexts.
-        inline bool hasNext() const { return idx < numElements - 1; }
+        inline bool hasNext() const { return idx < header.numElements - 1; }
 
         std::span<uint8_t> operator*() const {
-            KU_ASSERT(idx < numElements);
+            KU_ASSERT(idx < header.numElements);
+            KU_ASSERT(walPageIdxAndFrame.originalPageIdx != common::INVALID_PAGE_IDX);
             return std::span(walPageIdxAndFrame.frame + apCursor.elemPosInPage, valueSize);
+        }
+
+    private:
+        inline void getPage(common::page_idx_t newPageIdx, bool isNewlyAdded) {
+            if (walPageIdxAndFrame.pageIdxInWAL != common::INVALID_PAGE_IDX) {
+                // unpin current page
+                diskArray.bufferManager->unpin(
+                    *diskArray.wal->fileHandle, walPageIdxAndFrame.pageIdxInWAL);
+                common::ku_dynamic_cast<FileHandle&, BMFileHandle&>(diskArray.fileHandle)
+                    .releaseWALPageIdxLock(walPageIdxAndFrame.originalPageIdx);
+            }
+            // Pin new page
+            walPageIdxAndFrame = DBFileUtils::createWALVersionIfNecessaryAndPinPage(newPageIdx,
+                isNewlyAdded, (BMFileHandle&)diskArray.fileHandle, diskArray.dbFileID,
+                *diskArray.bufferManager, *diskArray.wal);
         }
     };
 

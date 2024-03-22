@@ -415,6 +415,8 @@ void HashIndex<T>::reserve(uint64_t newEntries) {
         // re-hashing a slot multiple times
         for (auto slots = pSlots->getNumElements(TransactionType::WRITE); slots < numRequiredSlots;
              slots++) {
+            // TODO: Use diskarray iterator to avoid updating the same page repeatedly
+            // appendPSlot/pushBack
             splitSlot(*this->indexHeaderForWriteTrx);
         }
     }
@@ -457,7 +459,7 @@ void HashIndex<T>::mergeBulkInserts() {
     // possible to support backwards seeking That will also handle updates, but it may be difficult
     // to also handle appends (ideally we can append to the current cached frame if possible, and
     // update the header just once at the end in the destructor instead of after each pushback
-    // TODO: This will write to the WAL file for every slot visited (and always the first one)
+    // TODO: This will write to the WAL file for every slot visited
     // If the primary slot is already full, it will not need to be written,
     // but we would only want to skip the write if no primary slots on the page are modified
     // It may be faster just to assume we will write, since after the reserve there should generally

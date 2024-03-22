@@ -127,14 +127,13 @@ uint64_t BaseDiskArrayInternal::pushBack(std::span<uint8_t> val) {
 }
 
 uint64_t BaseDiskArrayInternal::resize(uint64_t newNumElements, std::span<uint8_t> defaultVal) {
-    std::unique_lock xLck{diskArraySharedMtx};
+    auto it = iter(defaultVal.size());
     hasTransactionalUpdates = true;
-    auto currentNumElements = getNumElementsNoLock(TransactionType::WRITE);
-    while (currentNumElements < newNumElements) {
-        pushBackNoLock(defaultVal);
-        currentNumElements++;
+    while (it.header.numElements < newNumElements) {
+        it.pushBack();
+        memcpy((*it).data(), defaultVal.data(), defaultVal.size());
     }
-    return currentNumElements;
+    return it.originalNumElements;
 }
 
 uint64_t BaseDiskArrayInternal::pushBackNoLock(std::span<uint8_t> val) {
@@ -341,7 +340,7 @@ BaseDiskArrayInternal::getAPPageIdxAndAddAPToPIPIfNecessaryForWriteTrxNoLock(
 
 BaseDiskArrayInternal::iterator BaseDiskArrayInternal::iter(uint64_t valueSize) {
     std::unique_lock xLck{diskArraySharedMtx};
-    return BaseDiskArrayInternal::iterator(0, valueSize, *this, std::move(xLck));
+    return BaseDiskArrayInternal::iterator(valueSize, *this, std::move(xLck));
 }
 
 BaseInMemDiskArray::BaseInMemDiskArray(FileHandle& fileHandle, DBFileID dbFileID,
