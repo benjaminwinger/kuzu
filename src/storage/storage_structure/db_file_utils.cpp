@@ -1,31 +1,32 @@
 #include "storage/storage_structure/db_file_utils.h"
 
+#include "storage/wal/wal_record.h"
+
 using namespace kuzu::common;
 
 namespace kuzu {
 namespace storage {
 
-WALPageIdxAndFrame DBFileUtils::createWALVersionIfNecessaryAndPinPage(page_idx_t originalPageIdx,
-    bool insertingNewPage, BMFileHandle& fileHandle, DBFileID dbFileID,
-    BufferManager& bufferManager, WAL& wal) {
+PinnedFrame::PinnedFrame(page_idx_t originalPageIdx, bool insertingNewPage,
+    BMFileHandle& fileHandle, DBFileID dbFileID, BufferManager& bufferManager, WAL& wal)
+    : originalPageIdx{originalPageIdx}, bufferManager{&bufferManager},
+      originalFileHandle{&fileHandle}, wal{&wal} {
     fileHandle.addWALPageIdxGroupIfNecessary(originalPageIdx);
-    page_idx_t pageIdxInWAL;
-    uint8_t* walFrame;
     fileHandle.acquireWALPageIdxLock(originalPageIdx);
     try {
         if (fileHandle.hasWALPageVersionNoWALPageIdxLock(originalPageIdx)) {
             pageIdxInWAL = fileHandle.getWALPageIdxNoWALPageIdxLock(originalPageIdx);
-            walFrame = bufferManager.pin(
+            frame = bufferManager.pin(
                 *wal.fileHandle, pageIdxInWAL, BufferManager::PageReadPolicy::READ_PAGE);
         } else {
             pageIdxInWAL =
                 wal.logPageUpdateRecord(dbFileID, originalPageIdx /* pageIdxInOriginalFile */);
-            walFrame = bufferManager.pin(
+            frame = bufferManager.pin(
                 *wal.fileHandle, pageIdxInWAL, BufferManager::PageReadPolicy::DONT_READ_PAGE);
             if (!insertingNewPage) {
                 bufferManager.optimisticRead(
-                    fileHandle, originalPageIdx, [&](uint8_t* frame) -> void {
-                        memcpy(walFrame, frame, BufferPoolConstants::PAGE_4KB_SIZE);
+                    fileHandle, originalPageIdx, [&](uint8_t* originalFrame) -> void {
+                        memcpy(this->frame, originalFrame, BufferPoolConstants::PAGE_4KB_SIZE);
                     });
             }
             fileHandle.setWALPageIdxNoLock(
@@ -36,7 +37,40 @@ WALPageIdxAndFrame DBFileUtils::createWALVersionIfNecessaryAndPinPage(page_idx_t
         fileHandle.releaseWALPageIdxLock(originalPageIdx);
         throw;
     }
-    return {originalPageIdx, pageIdxInWAL, walFrame};
+}
+
+PinnedFrame::PinnedFrame(PinnedFrame&& other)
+    : originalPageIdx{other.originalPageIdx}, pageIdxInWAL{other.pageIdxInWAL},
+      bufferManager{other.bufferManager},
+      originalFileHandle{other.originalFileHandle}, wal{other.wal}, frame{other.frame} {
+    // other must not unpin the frame as we've taken ownership
+    other.originalPageIdx = INVALID_PAGE_IDX;
+    other.pageIdxInWAL = INVALID_PAGE_IDX;
+    other.frame = nullptr;
+}
+
+PinnedFrame& PinnedFrame::operator=(PinnedFrame&& other) {
+    unpin();
+    originalPageIdx = other.originalPageIdx;
+    pageIdxInWAL = other.pageIdxInWAL;
+    bufferManager = other.bufferManager;
+    originalFileHandle = other.originalFileHandle;
+    wal = other.wal;
+    frame = other.frame;
+    // other must not unpin the frame as we've taken ownership
+    other.originalPageIdx = INVALID_PAGE_IDX;
+    other.pageIdxInWAL = INVALID_PAGE_IDX;
+    other.frame = nullptr;
+    return *this;
+}
+
+void PinnedFrame::unpin() {
+    if (pageIdxInWAL != INVALID_PAGE_IDX) {
+        bufferManager->unpin(*wal->fileHandle, pageIdxInWAL);
+        originalFileHandle->releaseWALPageIdxLock(originalPageIdx);
+    } else if (originalPageIdx != INVALID_PAGE_IDX) {
+        bufferManager->unpin(*originalFileHandle, originalPageIdx);
+    }
 }
 
 void unpinPageIdxInWALAndReleaseOriginalPageLock(page_idx_t pageIdxInWAL,
@@ -45,12 +79,6 @@ void unpinPageIdxInWALAndReleaseOriginalPageLock(page_idx_t pageIdxInWAL,
         bufferManager.unpin(*wal.fileHandle, pageIdxInWAL);
         fileHandle.releaseWALPageIdxLock(originalPageIdx);
     }
-}
-
-void unpinWALPageAndReleaseOriginalPageLock(WALPageIdxAndFrame& walPageIdxAndFrame,
-    BMFileHandle& fileHandle, BufferManager& bufferManager, WAL& wal) {
-    unpinPageIdxInWALAndReleaseOriginalPageLock(walPageIdxAndFrame.pageIdxInWAL,
-        walPageIdxAndFrame.originalPageIdx, fileHandle, bufferManager, wal);
 }
 
 std::pair<BMFileHandle*, page_idx_t> DBFileUtils::getFileHandleAndPhysicalPageIdxToPin(
@@ -82,25 +110,17 @@ common::page_idx_t DBFileUtils::insertNewPage(BMFileHandle& fileHandle, DBFileID
 void DBFileUtils::updatePage(BMFileHandle& fileHandle, DBFileID dbFileID,
     page_idx_t originalPageIdx, bool isInsertingNewPage, BufferManager& bufferManager, WAL& wal,
     const std::function<void(uint8_t*)>& updateOp) {
-    auto walPageIdxAndFrame = createWALVersionIfNecessaryAndPinPage(
-        originalPageIdx, isInsertingNewPage, fileHandle, dbFileID, bufferManager, wal);
-    try {
-        updateOp(walPageIdxAndFrame.frame);
-    } catch (Exception& e) {
-        unpinWALPageAndReleaseOriginalPageLock(walPageIdxAndFrame, fileHandle, bufferManager, wal);
-        throw;
-    }
-    unpinWALPageAndReleaseOriginalPageLock(walPageIdxAndFrame, fileHandle, bufferManager, wal);
+    auto pinnedFrame =
+        PinnedFrame(originalPageIdx, isInsertingNewPage, fileHandle, dbFileID, bufferManager, wal);
+    updateOp(pinnedFrame.get());
 }
 
 void DBFileUtils::readWALVersionOfPage(BMFileHandle& fileHandle, page_idx_t originalPageIdx,
     BufferManager& bufferManager, WAL& wal, const std::function<void(uint8_t*)>& readOp) {
     page_idx_t pageIdxInWAL = fileHandle.getWALPageIdxNoWALPageIdxLock(originalPageIdx);
-    auto frame =
-        bufferManager.pin(*wal.fileHandle, pageIdxInWAL, BufferManager::PageReadPolicy::READ_PAGE);
-    readOp(frame);
-    unpinPageIdxInWALAndReleaseOriginalPageLock(
-        pageIdxInWAL, originalPageIdx, fileHandle, bufferManager, wal);
+    auto pinnedFrame = PinnedFrame(
+        pageIdxInWAL, bufferManager, *wal.fileHandle, BufferManager::PageReadPolicy::READ_PAGE);
+    readOp(pinnedFrame.get());
 }
 
 } // namespace storage

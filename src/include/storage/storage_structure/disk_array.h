@@ -155,7 +155,7 @@ public:
         // read and cache the page, then write the page to the WAL if it's ever modified. However
         // when doing bulk hashindex inserts, there's a high likelihood that every page accessed
         // will be modified, so it may be faster this way.
-        WALPageIdxAndFrame walPageIdxAndFrame;
+        std::optional<PinnedFrame> pinnedFrame;
         static const transaction::TransactionType TRX_TYPE = transaction::TransactionType::WRITE;
         uint64_t idx;
         uint64_t originalNumElements;
@@ -165,11 +165,9 @@ public:
         // Constructs iterator in an invalid state. Seek must be called before accessing data
         iterator(uint32_t valueSize, BaseDiskArrayInternal& diskArray,
             std::unique_lock<std::shared_mutex>&& lock)
-            : diskArray(diskArray), apCursor(),
-              valueSize(valueSize), walPageIdxAndFrame{common::INVALID_PAGE_IDX,
-                                        common::INVALID_PAGE_IDX, nullptr},
-              idx(0), originalNumElements(diskArray.getNumElementsNoLock(TRX_TYPE)),
-              lock(std::move(lock)) {}
+            : diskArray(diskArray), apCursor(), valueSize(valueSize), pinnedFrame{}, idx(0),
+              originalNumElements(diskArray.getNumElementsNoLock(TRX_TYPE)), lock(std::move(lock)) {
+        }
 
         inline iterator& seek(size_t newIdx) {
             auto originalPageIdx = apCursor.pageIdx;
@@ -197,54 +195,34 @@ public:
                 diskArray.getAPPageIdxAndAddAPToPIPIfNecessaryForWriteTrxNoLock(
                     &diskArray.headerForWriteTrx, apCursor.pageIdx);
             diskArray.lastAPPageIdx = apPageIdx;
-            if (isNewlyAdded || walPageIdxAndFrame.originalPageIdx == common::INVALID_PAGE_IDX) {
+            if (isNewlyAdded || !pinnedFrame.has_value()) {
                 getPage(apPageIdx, isNewlyAdded);
             }
         }
 
         inline iterator& operator+=(size_t increment) { return seek(idx + increment); }
 
-        ~iterator() { unpin(); }
-
         std::span<uint8_t> operator*() const {
             KU_ASSERT(idx < diskArray.headerForWriteTrx.numElements);
-            KU_ASSERT(walPageIdxAndFrame.originalPageIdx != common::INVALID_PAGE_IDX);
-            return std::span(walPageIdxAndFrame.frame + apCursor.elemPosInPage, valueSize);
+            KU_ASSERT(pinnedFrame.has_value());
+            return std::span(pinnedFrame->get() + apCursor.elemPosInPage, valueSize);
         }
 
         inline uint64_t size() const { return diskArray.headerForWriteTrx.numElements; }
 
     private:
-        inline void unpin() {
-            // TODO(bmwinger): this should be moved into WALPageIdxAndFrame's destructor (or
-            // something similar)
-            auto& bmFileHandle =
-                common::ku_dynamic_cast<FileHandle&, BMFileHandle&>(diskArray.fileHandle);
-            if (walPageIdxAndFrame.pageIdxInWAL != common::INVALID_PAGE_IDX) {
-                // unpin current page
-                diskArray.bufferManager->unpin(
-                    *diskArray.wal->fileHandle, walPageIdxAndFrame.pageIdxInWAL);
-                bmFileHandle.releaseWALPageIdxLock(walPageIdxAndFrame.originalPageIdx);
-            } else if (walPageIdxAndFrame.originalPageIdx != common::INVALID_PAGE_IDX) {
-                bmFileHandle.setLockedPageDirty(walPageIdxAndFrame.originalPageIdx);
-                diskArray.bufferManager->unpin(bmFileHandle, walPageIdxAndFrame.originalPageIdx);
-            }
-        }
         inline void getPage(common::page_idx_t newPageIdx, bool isNewlyAdded) {
             auto& bmFileHandle =
                 common::ku_dynamic_cast<FileHandle&, BMFileHandle&>(diskArray.fileHandle);
-            unpin();
             if (newPageIdx <= diskArray.lastPageOnDisk) {
                 // Pin new page
-                walPageIdxAndFrame =
-                    DBFileUtils::createWALVersionIfNecessaryAndPinPage(newPageIdx, isNewlyAdded,
-                        bmFileHandle, diskArray.dbFileID, *diskArray.bufferManager, *diskArray.wal);
+                pinnedFrame = std::make_optional(PinnedFrame(newPageIdx, isNewlyAdded, bmFileHandle,
+                    diskArray.dbFileID, *diskArray.bufferManager, *diskArray.wal));
             } else {
-                walPageIdxAndFrame.frame = diskArray.bufferManager->pin(bmFileHandle, newPageIdx,
-                    isNewlyAdded ? BufferManager::PageReadPolicy::DONT_READ_PAGE :
-                                   BufferManager::PageReadPolicy::READ_PAGE);
-                walPageIdxAndFrame.originalPageIdx = newPageIdx;
-                walPageIdxAndFrame.pageIdxInWAL = common::INVALID_PAGE_IDX;
+                pinnedFrame = std::make_optional(
+                    PinnedFrame(newPageIdx, *diskArray.bufferManager, bmFileHandle,
+                        isNewlyAdded ? BufferManager::PageReadPolicy::DONT_READ_PAGE :
+                                       BufferManager::PageReadPolicy::READ_PAGE));
             }
         }
     };

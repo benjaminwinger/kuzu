@@ -13,15 +13,36 @@
 namespace kuzu {
 namespace storage {
 
-struct WALPageIdxAndFrame {
-    WALPageIdxAndFrame(
-        common::page_idx_t originalPageIdx, common::page_idx_t pageIdxInWAL, uint8_t* frame)
-        : originalPageIdx{originalPageIdx}, pageIdxInWAL{pageIdxInWAL}, frame{frame} {}
+class PinnedFrame {
+public:
+    // Pin frame using original file handle
+    PinnedFrame(common::page_idx_t originalPageIdx, BufferManager& bufferManager,
+        BMFileHandle& originalFileHandle, BufferManager::PageReadPolicy readPolicy)
+        : originalPageIdx{originalPageIdx}, pageIdxInWAL{common::INVALID_PAGE_IDX},
+          bufferManager{&bufferManager}, originalFileHandle{&originalFileHandle}, wal{nullptr},
+          frame{bufferManager.pin(originalFileHandle, originalPageIdx, readPolicy)} {}
 
-    DELETE_COPY_DEFAULT_MOVE(WALPageIdxAndFrame);
+    // Pin frame using WAL
+    PinnedFrame(common::page_idx_t originalPageIdx, bool insertingNewPage, BMFileHandle& fileHandle,
+        DBFileID dbFileID, BufferManager& bufferManager, WAL& wal);
 
+    PinnedFrame(PinnedFrame&& other);
+    PinnedFrame& operator=(PinnedFrame&& other);
+    DELETE_BOTH_COPY(PinnedFrame);
+
+    inline ~PinnedFrame() { unpin(); }
+
+    uint8_t* get() const { return frame; }
+
+private:
+    void unpin();
+
+private:
     common::page_idx_t originalPageIdx;
     common::page_idx_t pageIdxInWAL;
+    BufferManager* bufferManager;
+    BMFileHandle* originalFileHandle;
+    WAL* wal;
     uint8_t* frame;
 };
 
@@ -30,11 +51,6 @@ public:
     constexpr static common::page_idx_t NULL_PAGE_IDX = common::INVALID_PAGE_IDX;
 
 public:
-    // TODO(bmwinger): this shouldn't be public. It would be better to provide a scoped object.
-    static WALPageIdxAndFrame createWALVersionIfNecessaryAndPinPage(
-        common::page_idx_t originalPageIdx, bool insertingNewPage, BMFileHandle& fileHandle,
-        DBFileID dbFileID, BufferManager& bufferManager, WAL& wal);
-
     static std::pair<BMFileHandle*, common::page_idx_t> getFileHandleAndPhysicalPageIdxToPin(
         BMFileHandle& fileHandle, common::page_idx_t physicalPageIdx, WAL& wal,
         transaction::TransactionType trxType);
