@@ -1,19 +1,26 @@
 #pragma once
 
-#include "common/types/types.h"
 #include "hash_index_slot.h"
 
 namespace kuzu {
 namespace storage {
 
+struct HashIndexHeaderOnDisk {
+    uint8_t currentLevel;
+    slot_id_t nextSplitSlotId;
+    uint64_t numEntries;
+};
+
 class HashIndexHeader {
 public:
-    explicit HashIndexHeader(common::PhysicalTypeID keyDataTypeID)
+    explicit HashIndexHeader()
         : currentLevel{1}, levelHashMask{1}, higherLevelHashMask{3}, nextSplitSlotId{0},
-          numEntries{0}, keyDataTypeID{keyDataTypeID} {}
+          numEntries{0} {}
 
-    // Used for element initialization in disk array only.
-    HashIndexHeader() : HashIndexHeader(common::PhysicalTypeID::STRING) {}
+    explicit HashIndexHeader(const HashIndexHeaderOnDisk& onDiskHeader)
+        : currentLevel{onDiskHeader.currentLevel}, levelHashMask{(1ull << this->currentLevel) - 1},
+          higherLevelHashMask{(1ull << (this->currentLevel + 1)) - 1},
+          nextSplitSlotId{onDiskHeader.nextSplitSlotId}, numEntries{onDiskHeader.numEntries} {}
 
     inline void incrementLevel() {
         currentLevel++;
@@ -29,13 +36,18 @@ public:
         }
     }
 
+    inline void write(HashIndexHeaderOnDisk& onDiskHeader) const {
+        onDiskHeader.currentLevel = currentLevel;
+        onDiskHeader.nextSplitSlotId = nextSplitSlotId;
+        onDiskHeader.numEntries = numEntries;
+    }
+
 public:
     uint64_t currentLevel;
     uint64_t levelHashMask;
     uint64_t higherLevelHashMask;
     slot_id_t nextSplitSlotId;
     uint64_t numEntries;
-    common::PhysicalTypeID keyDataTypeID;
 };
 
 } // namespace storage

@@ -35,9 +35,9 @@ class HashIndexLocalStorage;
 class OnDiskHashIndex {
 public:
     virtual ~OnDiskHashIndex() = default;
-    virtual void prepareCommit() = 0;
+    virtual bool prepareCommit() = 0;
     virtual void prepareRollback() = 0;
-    virtual void checkpointInMemory() = 0;
+    virtual bool checkpointInMemory() = 0;
     virtual void rollbackInMemory() = 0;
     virtual void bulkReserve(uint64_t numValuesToAppend) = 0;
 };
@@ -69,7 +69,8 @@ class HashIndex final : public OnDiskHashIndex {
 public:
     HashIndex(const DBFileIDAndName& dbFileIDAndName,
         const std::shared_ptr<BMFileHandle>& fileHandle, OverflowFileHandle* overflowFileHandle,
-        uint64_t indexPos, BufferManager& bufferManager, WAL* wal);
+        uint64_t indexPos, BufferManager& bufferManager, WAL* wal,
+        const HashIndexHeader& indexHeaderForReadTrx, HashIndexHeader& indexHeaderForWriteTrx);
 
     ~HashIndex() override;
 
@@ -86,9 +87,9 @@ public:
     // or the index of the first value which cannot be inserted.
     size_t append(const IndexBuffer<BufferKeyType>& buffer);
 
-    void prepareCommit() override;
+    bool prepareCommit() override;
     void prepareRollback() override;
-    void checkpointInMemory() override;
+    bool checkpointInMemory() override;
     void rollbackInMemory() override;
     inline BMFileHandle* getFileHandle() const { return fileHandle.get(); }
 
@@ -165,7 +166,7 @@ private:
     bool nextChainedSlot(transaction::TransactionType trxType, SlotIterator& iter) {
         KU_ASSERT(iter.slotInfo.slotType == SlotType::PRIMARY ||
                   iter.slotInfo.slotId != iter.slot.header.nextOvfSlotId);
-        if (iter.slot.header.nextOvfSlotId != 0) {
+        if (iter.slot.header.nextOvfSlotId != SlotHeader::INVALID_SLOT) {
             iter.slotInfo.slotId = iter.slot.header.nextOvfSlotId;
             iter.slotInfo.slotType = SlotType::OVF;
             iter.slot = getSlot(trxType, iter.slotInfo);
@@ -205,14 +206,13 @@ private:
     BufferManager& bm;
     WAL* wal;
     std::shared_ptr<BMFileHandle> fileHandle;
-    std::unique_ptr<BaseDiskArray<HashIndexHeader>> headerArray;
     std::unique_ptr<BaseDiskArray<Slot<T>>> pSlots;
     std::unique_ptr<BaseDiskArray<Slot<T>>> oSlots;
     OverflowFileHandle* overflowFileHandle;
     std::unique_ptr<HashIndexLocalStorage<BufferKeyType>> localStorage;
     InMemHashIndex<T> bulkInsertLocalStorage;
-    std::unique_ptr<HashIndexHeader> indexHeaderForReadTrx;
-    std::unique_ptr<HashIndexHeader> indexHeaderForWriteTrx;
+    const HashIndexHeader& indexHeaderForReadTrx;
+    HashIndexHeader& indexHeaderForWriteTrx;
 };
 
 template<>
@@ -308,22 +308,18 @@ public:
 
     inline common::PhysicalTypeID keyTypeID() { return keyDataTypeID; }
 
-    static void createEmptyHashIndexFiles(common::PhysicalTypeID typeID, const std::string& fName,
-        common::VirtualFileSystem* vfs);
+    void writeHeaders();
 
 private:
-    // When doing batch inserts, prepareCommit needs to be run before the COPY TABLE record is
-    // logged to the WAL file, since the index is reloaded when that record is replayed. However
-    // prepareCommit will also be run later, and the local storage can't cleared from the
-    // HashIndices until checkpointing is done, and entries will get added twice if
-    // HashIndex::prepareCommit is run twice. It seems simplest to just track whether or not
-    // prepareCommit has been run.
-    bool hasRunPrepareCommit;
     common::PhysicalTypeID keyDataTypeID;
     std::shared_ptr<BMFileHandle> fileHandle;
     std::unique_ptr<OverflowFile> overflowFile;
     std::vector<std::unique_ptr<OnDiskHashIndex>> hashIndices;
+    std::vector<HashIndexHeader> hashIndexHeadersForReadTrx;
+    std::vector<HashIndexHeader> hashIndexHeadersForWriteTrx;
     BufferManager& bufferManager;
+    DBFileIDAndName dbFileIDAndName;
+    WAL& wal;
 };
 
 } // namespace storage

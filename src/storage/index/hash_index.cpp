@@ -6,12 +6,10 @@
 #include "common/assert.h"
 #include "common/constants.h"
 #include "common/string_utils.h"
-#include "common/type_utils.h"
 #include "common/types/int128_t.h"
 #include "common/types/internal_id_t.h"
 #include "common/types/ku_string.h"
 #include "common/types/types.h"
-#include "common/vector/value_vector.h"
 #include "storage/buffer_manager/bm_file_handle.h"
 #include "storage/file_handle.h"
 #include "storage/index/hash_index_header.h"
@@ -19,6 +17,7 @@
 #include "storage/index/hash_index_utils.h"
 #include "storage/index/in_mem_hash_index.h"
 #include "storage/storage_structure/disk_array.h"
+#include "storage/storage_utils.h"
 #include "transaction/transaction.h"
 
 using namespace kuzu::common;
@@ -104,24 +103,16 @@ private:
 template<typename T>
 HashIndex<T>::HashIndex(const DBFileIDAndName& dbFileIDAndName,
     const std::shared_ptr<BMFileHandle>& fileHandle, OverflowFileHandle* overflowFileHandle,
-    uint64_t indexPos, BufferManager& bufferManager, WAL* wal)
+    uint64_t indexPos, BufferManager& bufferManager, WAL* wal,
+    const HashIndexHeader& headerForReadTrx, HashIndexHeader& headerForWriteTrx)
     : dbFileIDAndName{dbFileIDAndName}, bm{bufferManager}, wal{wal}, fileHandle(fileHandle),
-      overflowFileHandle(overflowFileHandle), bulkInsertLocalStorage{overflowFileHandle} {
-    // TODO: Handle data not existing
-    headerArray = std::make_unique<BaseDiskArray<HashIndexHeader>>(*fileHandle,
-        dbFileIDAndName.dbFileID, NUM_HEADER_PAGES * indexPos + INDEX_HEADER_ARRAY_HEADER_PAGE_IDX,
-        &bm, wal, Transaction::getDummyReadOnlyTrx().get(), true /*bypassWAL*/);
-    // Read indexHeader from the headerArray, which contains only one element.
-    this->indexHeaderForReadTrx = std::make_unique<HashIndexHeader>(
-        headerArray->get(INDEX_HEADER_IDX_IN_ARRAY, TransactionType::READ_ONLY));
-    this->indexHeaderForWriteTrx = std::make_unique<HashIndexHeader>(*indexHeaderForReadTrx);
-    KU_ASSERT(
-        this->indexHeaderForReadTrx->keyDataTypeID == TypeUtils::getPhysicalTypeIDForType<T>());
+      overflowFileHandle(overflowFileHandle), bulkInsertLocalStorage{overflowFileHandle},
+      indexHeaderForReadTrx{headerForReadTrx}, indexHeaderForWriteTrx{headerForWriteTrx} {
     pSlots = std::make_unique<BaseDiskArray<Slot<T>>>(*fileHandle, dbFileIDAndName.dbFileID,
-        NUM_HEADER_PAGES * indexPos + P_SLOTS_HEADER_PAGE_IDX, &bm, wal,
+        INDEX_HEADER_PAGES + NUM_HEADER_PAGES * indexPos + P_SLOTS_HEADER_PAGE_IDX, &bm, wal,
         Transaction::getDummyReadOnlyTrx().get(), true /*bypassWAL*/);
     oSlots = std::make_unique<BaseDiskArray<Slot<T>>>(*fileHandle, dbFileIDAndName.dbFileID,
-        NUM_HEADER_PAGES * indexPos + O_SLOTS_HEADER_PAGE_IDX, &bm, wal,
+        INDEX_HEADER_PAGES + NUM_HEADER_PAGES * indexPos + O_SLOTS_HEADER_PAGE_IDX, &bm, wal,
         Transaction::getDummyReadOnlyTrx().get(), true /*bypassWAL*/);
     // Initialize functions.
     localStorage = std::make_unique<HashIndexLocalStorage<BufferKeyType>>();
@@ -184,7 +175,7 @@ bool HashIndex<T>::insertInternal(Key key, offset_t value) {
 template<typename T>
 size_t HashIndex<T>::append(const IndexBuffer<BufferKeyType>& buffer) {
     // Check if values already exist in persistent storage
-    if (indexHeaderForWriteTrx->numEntries > 0) {
+    if (indexHeaderForWriteTrx.numEntries > 0) {
         common::offset_t result;
         for (size_t i = 0; i < buffer.size(); i++) {
             const auto& [key, value] = buffer[i];
@@ -198,8 +189,8 @@ size_t HashIndex<T>::append(const IndexBuffer<BufferKeyType>& buffer) {
 
 template<typename T>
 bool HashIndex<T>::lookupInPersistentIndex(TransactionType trxType, Key key, offset_t& result) {
-    auto& header = trxType == TransactionType::READ_ONLY ? *this->indexHeaderForReadTrx :
-                                                           *this->indexHeaderForWriteTrx;
+    auto& header = trxType == TransactionType::READ_ONLY ? this->indexHeaderForReadTrx :
+                                                           this->indexHeaderForWriteTrx;
     // There may not be any primary key slots if we try to lookup on an empty index
     if (header.numEntries == 0) {
         return false;
@@ -220,7 +211,7 @@ bool HashIndex<T>::lookupInPersistentIndex(TransactionType trxType, Key key, off
 
 template<typename T>
 void HashIndex<T>::insertIntoPersistentIndex(Key key, offset_t value) {
-    auto& header = *this->indexHeaderForWriteTrx;
+    auto& header = this->indexHeaderForWriteTrx;
     reserve(1);
     auto hashValue = HashIndexUtils::hash(key);
     auto fingerprint = HashIndexUtils::getFingerprintForHash(hashValue);
@@ -237,7 +228,7 @@ void HashIndex<T>::insertIntoPersistentIndex(Key key, offset_t value) {
 template<typename T>
 void HashIndex<T>::deleteFromPersistentIndex(Key key) {
     auto trxType = TransactionType::WRITE;
-    auto header = *this->indexHeaderForWriteTrx;
+    auto& header = this->indexHeaderForWriteTrx;
     if (header.numEntries == 0) {
         return;
     }
@@ -278,7 +269,7 @@ entry_pos_t HashIndex<T>::findMatchedEntryInSlot(TransactionType trxType, const 
 }
 
 template<typename T>
-void HashIndex<T>::prepareCommit() {
+bool HashIndex<T>::prepareCommit() {
     if (localStorage->hasUpdates()) {
         wal->addToUpdatedTables(dbFileIDAndName.dbFileID.nodeIndexID.tableID);
         auto netInserts = localStorage->getNetInserts();
@@ -290,16 +281,18 @@ void HashIndex<T>::prepareCommit() {
             [this](Key key, offset_t value) -> void {
                 this->insertIntoPersistentIndex(key, value);
             });
-        headerArray->update(INDEX_HEADER_IDX_IN_ARRAY, *indexHeaderForWriteTrx);
+        pSlots->prepareCommit();
+        oSlots->prepareCommit();
+        return true;
     }
     if (bulkInsertLocalStorage.size() > 0) {
         wal->addToUpdatedTables(dbFileIDAndName.dbFileID.nodeIndexID.tableID);
         mergeBulkInserts();
-        headerArray->update(INDEX_HEADER_IDX_IN_ARRAY, *indexHeaderForWriteTrx);
+        pSlots->prepareCommit();
+        oSlots->prepareCommit();
+        return true;
     }
-    headerArray->prepareCommit();
-    pSlots->prepareCommit();
-    oSlots->prepareCommit();
+    return false;
 }
 
 template<typename T>
@@ -310,12 +303,10 @@ void HashIndex<T>::prepareRollback() {
 }
 
 template<typename T>
-void HashIndex<T>::checkpointInMemory() {
+bool HashIndex<T>::checkpointInMemory() {
     if (!localStorage->hasUpdates() && bulkInsertLocalStorage.size() == 0) {
-        return;
+        return false;
     }
-    *indexHeaderForReadTrx = *indexHeaderForWriteTrx;
-    headerArray->checkpointInMemoryIfNecessary();
     pSlots->checkpointInMemoryIfNecessary();
     oSlots->checkpointInMemoryIfNecessary();
     localStorage->clear();
@@ -323,6 +314,7 @@ void HashIndex<T>::checkpointInMemory() {
         overflowFileHandle->checkpointInMemory();
     }
     bulkInsertLocalStorage.clear();
+    return true;
 }
 
 template<typename T>
@@ -330,12 +322,10 @@ void HashIndex<T>::rollbackInMemory() {
     if (!localStorage->hasUpdates() && bulkInsertLocalStorage.size() == 0) {
         return;
     }
-    headerArray->rollbackInMemoryIfNecessary();
     pSlots->rollbackInMemoryIfNecessary();
     oSlots->rollbackInMemoryIfNecessary();
     localStorage->clear();
     bulkInsertLocalStorage.clear();
-    *indexHeaderForWriteTrx = *indexHeaderForReadTrx;
 }
 
 template<>
@@ -392,7 +382,7 @@ void HashIndex<T>::splitSlots(HashIndexHeader& header, slot_id_t numSlotsToSplit
                     newEntryPos++;
                 }
             }
-        } while (originalSlot->header.nextOvfSlotId != 0 &&
+        } while (originalSlot->header.nextOvfSlotId != SlotHeader::INVALID_SLOT &&
                  (originalSlot = &*overflowSlotIterator.seek(originalSlot->header.nextOvfSlotId)));
         header.incrementNextSplitSlotId();
     }
@@ -405,7 +395,7 @@ template<typename T>
 std::vector<std::pair<SlotInfo, Slot<T>>> HashIndex<T>::getChainedSlots(slot_id_t pSlotId) {
     std::vector<std::pair<SlotInfo, Slot<T>>> slots;
     SlotInfo slotInfo{pSlotId, SlotType::PRIMARY};
-    while (slotInfo.slotType == SlotType::PRIMARY || slotInfo.slotId != 0) {
+    while (slotInfo.slotType == SlotType::PRIMARY || slotInfo.slotId != SlotHeader::INVALID_SLOT) {
         auto slot = getSlot(TransactionType::WRITE, slotInfo);
         slots.emplace_back(slotInfo, slot);
         slotInfo.slotId = slot.header.nextOvfSlotId;
@@ -427,12 +417,12 @@ void HashIndex<T>::copyEntryToSlot(slot_id_t slotId, const T& entry, uint8_t fin
 }
 template<typename T>
 void HashIndex<T>::reserve(uint64_t newEntries) {
-    slot_id_t numRequiredEntries = HashIndexUtils::getNumRequiredEntries(
-        this->indexHeaderForWriteTrx->numEntries + newEntries);
+    slot_id_t numRequiredEntries =
+        HashIndexUtils::getNumRequiredEntries(this->indexHeaderForWriteTrx.numEntries + newEntries);
     // Can be no fewer slots that the current level requires
     auto numRequiredSlots =
         std::max((numRequiredEntries + getSlotCapacity<T>() - 1) / getSlotCapacity<T>(),
-            static_cast<slot_id_t>(1ul << this->indexHeaderForWriteTrx->currentLevel));
+            static_cast<slot_id_t>(1ul << this->indexHeaderForWriteTrx.currentLevel));
     // Always start with at least one page worth of slots.
     // This guarantees that when splitting the source and destination slot are never on the same
     // page
@@ -441,20 +431,20 @@ void HashIndex<T>::reserve(uint64_t newEntries) {
         BufferPoolConstants::PAGE_4KB_SIZE / pSlots->getAlignedElementSize());
     // If there are no entries, we can just re-size the number of primary slots and re-calculate the
     // levels
-    if (this->indexHeaderForWriteTrx->numEntries == 0) {
+    if (this->indexHeaderForWriteTrx.numEntries == 0) {
         pSlots->resize(numRequiredSlots);
 
-        auto numSlotsOfCurrentLevel = 1u << this->indexHeaderForWriteTrx->currentLevel;
+        auto numSlotsOfCurrentLevel = 1u << this->indexHeaderForWriteTrx.currentLevel;
         while ((numSlotsOfCurrentLevel << 1) <= numRequiredSlots) {
-            this->indexHeaderForWriteTrx->incrementLevel();
+            this->indexHeaderForWriteTrx.incrementLevel();
             numSlotsOfCurrentLevel <<= 1;
         }
         if (numRequiredSlots >= numSlotsOfCurrentLevel) {
-            this->indexHeaderForWriteTrx->nextSplitSlotId =
+            this->indexHeaderForWriteTrx.nextSplitSlotId =
                 numRequiredSlots - numSlotsOfCurrentLevel;
         };
     } else {
-        splitSlots(*this->indexHeaderForWriteTrx,
+        splitSlots(this->indexHeaderForWriteTrx,
             numRequiredSlots - pSlots->getNumElements(TransactionType::WRITE));
     }
 }
@@ -473,7 +463,7 @@ void HashIndex<T>::mergeBulkInserts() {
     // TODO: one pass would also reduce locking when frames are unpinned,
     // which is useful if this can be paralellized
     reserve(bulkInsertLocalStorage.size());
-    auto originalNumEntries = this->indexHeaderForWriteTrx->numEntries;
+    auto originalNumEntries = this->indexHeaderForWriteTrx.numEntries;
 
     // Storing as many slots in-memory as on-disk shouldn't be necessary (for one it makes memory
     // usage an issue as we may need significantly more memory to store the slots that we would
@@ -507,13 +497,13 @@ void HashIndex<T>::mergeBulkInserts() {
     for (uint64_t localSlotId = pSlots->getNumElements(TransactionType::WRITE);
          localSlotId < bulkInsertLocalStorage.numPrimarySlots(); localSlotId++) {
         auto diskSlotId =
-            HashIndexUtils::getPrimarySlotIdForHash(*indexHeaderForWriteTrx, localSlotId);
+            HashIndexUtils::getPrimarySlotIdForHash(indexHeaderForWriteTrx, localSlotId);
         auto localSlot =
             typename InMemHashIndex<T>::SlotIterator(localSlotId, &bulkInsertLocalStorage);
         mergeSlot(localSlot, diskSlotIterator, diskOverflowSlotIterator, diskSlotId);
     }
     KU_ASSERT(originalNumEntries + bulkInsertLocalStorage.getIndexHeader().numEntries ==
-              indexHeaderForWriteTrx->numEntries);
+              indexHeaderForWriteTrx.numEntries);
 }
 
 template<typename T>
@@ -537,7 +527,7 @@ void HashIndex<T>::mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMer
             auto key = slotToMerge.slot->entries[entryPos].key;
             auto hash = hashStored(TransactionType::WRITE, key);
             auto primarySlot =
-                HashIndexUtils::getPrimarySlotIdForHash(*indexHeaderForWriteTrx, hash);
+                HashIndexUtils::getPrimarySlotIdForHash(indexHeaderForWriteTrx, hash);
             if (primarySlot != diskSlotId) {
                 continue;
             }
@@ -550,7 +540,7 @@ void HashIndex<T>::mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMer
                    diskEntryPos >= getSlotCapacity<T>()) {
                 diskEntryPos++;
                 if (diskEntryPos >= getSlotCapacity<T>()) {
-                    if (diskSlot->header.nextOvfSlotId == 0) {
+                    if (diskSlot->header.nextOvfSlotId == SlotHeader::INVALID_SLOT) {
                         // If there are no more disk slots in this chain, we need to add one
                         diskSlot->header.nextOvfSlotId = diskOverflowSlotIterator.size();
                         // This may invalidate diskSlot
@@ -575,7 +565,7 @@ void HashIndex<T>::mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMer
                 KU_ASSERT(primarySlot == diskSlotId);
                 return true;
             }());
-            indexHeaderForWriteTrx->numEntries++;
+            indexHeaderForWriteTrx.numEntries++;
             diskEntryPos++;
         }
     } while (bulkInsertLocalStorage.nextChainedSlot(slotToMerge));
@@ -600,11 +590,33 @@ template class HashIndex<ku_string_t>;
 PrimaryKeyIndex::PrimaryKeyIndex(const DBFileIDAndName& dbFileIDAndName, bool readOnly,
     common::PhysicalTypeID keyDataType, BufferManager& bufferManager, WAL* wal,
     VirtualFileSystem* vfs)
-    : hasRunPrepareCommit{false}, keyDataTypeID(keyDataType), bufferManager{bufferManager} {
+    : keyDataTypeID(keyDataType), bufferManager{bufferManager}, dbFileIDAndName{dbFileIDAndName},
+      wal{*wal} {
     fileHandle = bufferManager.getBMFileHandle(dbFileIDAndName.fName,
         readOnly ? FileHandle::O_PERSISTENT_FILE_READ_ONLY :
-                   FileHandle::O_PERSISTENT_FILE_NO_CREATE,
+                   FileHandle::O_PERSISTENT_FILE_CREATE_NOT_EXISTS,
         BMFileHandle::FileVersionedType::VERSIONED_FILE, vfs);
+
+    if (fileHandle->getNumPages() == 0) {
+        fileHandle->addNewPages(INDEX_HEADER_PAGES);
+        // TODO: Default number of primary slots should be 0, but is actually 2 according to the
+        // header
+        hashIndexHeadersForReadTrx.resize(NUM_HASH_INDEXES);
+        hashIndexHeadersForWriteTrx.resize(NUM_HASH_INDEXES);
+    } else {
+        size_t headerIdx = 0;
+        for (size_t headerPageIdx = 0; headerPageIdx < INDEX_HEADER_PAGES; headerPageIdx++) {
+            bufferManager.optimisticRead(*fileHandle, headerPageIdx, [&](auto* frame) {
+                auto onDiskHeaders = reinterpret_cast<HashIndexHeaderOnDisk*>(frame);
+                for (size_t i = 0; i < INDEX_HEADERS_PER_PAGE && headerIdx < NUM_HASH_INDEXES;
+                     i++) {
+                    hashIndexHeadersForReadTrx.emplace_back(onDiskHeaders[i]);
+                    hashIndexHeadersForWriteTrx.push_back(hashIndexHeadersForReadTrx.back());
+                }
+            });
+        }
+    }
+
     if (keyDataTypeID == PhysicalTypeID::STRING) {
         overflowFile =
             std::make_unique<OverflowFile>(dbFileIDAndName, &bufferManager, wal, readOnly, vfs);
@@ -616,13 +628,15 @@ PrimaryKeyIndex::PrimaryKeyIndex(const DBFileIDAndName& dbFileIDAndName, bool re
         [&](ku_string_t) {
             for (auto i = 0u; i < NUM_HASH_INDEXES; i++) {
                 hashIndices.push_back(std::make_unique<HashIndex<ku_string_t>>(dbFileIDAndName,
-                    fileHandle, overflowFile->addHandle(), i, bufferManager, wal));
+                    fileHandle, overflowFile->addHandle(), i, bufferManager, wal,
+                    hashIndexHeadersForReadTrx[i], hashIndexHeadersForWriteTrx[i]));
             }
         },
         [&]<HashablePrimitive T>(T) {
             for (auto i = 0u; i < NUM_HASH_INDEXES; i++) {
                 hashIndices.push_back(std::make_unique<HashIndex<T>>(dbFileIDAndName, fileHandle,
-                    nullptr, i, bufferManager, wal));
+                    nullptr, i, bufferManager, wal, hashIndexHeadersForReadTrx[i],
+                    hashIndexHeadersForWriteTrx[i]));
             }
         },
         [&](auto) { KU_UNREACHABLE; });
@@ -671,13 +685,20 @@ void PrimaryKeyIndex::delete_(ValueVector* keyVector) {
 }
 
 void PrimaryKeyIndex::checkpointInMemory() {
+    bool indexChanged = false;
     for (auto i = 0u; i < NUM_HASH_INDEXES; i++) {
-        hashIndices[i]->checkpointInMemory();
+        if (hashIndices[i]->checkpointInMemory()) {
+            indexChanged = true;
+        }
+    }
+    if (indexChanged) {
+        for (size_t i = 0; i < NUM_HASH_INDEXES; i++) {
+            hashIndexHeadersForReadTrx[i] = hashIndexHeadersForWriteTrx[i];
+        }
     }
     if (overflowFile) {
         overflowFile->checkpointInMemory();
     }
-    hasRunPrepareCommit = false;
 }
 
 void PrimaryKeyIndex::rollbackInMemory() {
@@ -687,26 +708,43 @@ void PrimaryKeyIndex::rollbackInMemory() {
     if (overflowFile) {
         overflowFile->rollbackInMemory();
     }
-    hasRunPrepareCommit = false;
+}
+
+void PrimaryKeyIndex::writeHeaders() {
+    size_t headerIdx = 0;
+    for (size_t headerPageIdx = 0; headerPageIdx < NUM_HEADER_PAGES; headerPageIdx++) {
+        DBFileUtils::updatePage(*fileHandle, dbFileIDAndName.dbFileID, headerPageIdx,
+            true /*writing all the data to the page; no need to read original*/, bufferManager, wal,
+            [&](auto* frame) {
+                auto onDiskFrame = reinterpret_cast<HashIndexHeaderOnDisk*>(frame);
+                for (size_t i = 0; i < INDEX_HEADERS_PER_PAGE && headerIdx < NUM_HASH_INDEXES;
+                     i++) {
+                    hashIndexHeadersForWriteTrx[headerIdx++].write(onDiskFrame[i]);
+                }
+            });
+    }
 }
 
 void PrimaryKeyIndex::prepareCommit() {
-    if (!hasRunPrepareCommit) {
-        for (auto i = 0u; i < NUM_HASH_INDEXES; i++) {
-            hashIndices[i]->prepareCommit();
+    bool indexChanged = false;
+    for (auto i = 0u; i < NUM_HASH_INDEXES; i++) {
+        if (hashIndices[i]->prepareCommit()) {
+            indexChanged = true;
         }
-        if (overflowFile) {
-            overflowFile->prepareCommit();
-        }
-        // Make sure that changes which bypassed the WAL are written.
-        // There is no other mechanism for enforcing that they are flushed
-        // and they will be dropped when the file handle is destroyed.
-        // TODO: Should eventually be moved into the disk array when the disk array can
-        // generally handle bypassing the WAL, but should only be run once per file, not once per
-        // disk array
-        bufferManager.flushAllDirtyPagesInFrames(*fileHandle);
-        hasRunPrepareCommit = true;
     }
+    if (indexChanged) {
+        writeHeaders();
+    }
+    if (overflowFile) {
+        overflowFile->prepareCommit();
+    }
+    // Make sure that changes which bypassed the WAL are written.
+    // There is no other mechanism for enforcing that they are flushed
+    // and they will be dropped when the file handle is destroyed.
+    // TODO: Should eventually be moved into the disk array when the disk array can
+    // generally handle bypassing the WAL, but should only be run once per file, not once per
+    // disk array
+    bufferManager.flushAllDirtyPagesInFrames(*fileHandle);
 }
 
 void PrimaryKeyIndex::prepareRollback() {
@@ -716,23 +754,6 @@ void PrimaryKeyIndex::prepareRollback() {
 }
 
 PrimaryKeyIndex::~PrimaryKeyIndex() = default;
-
-void PrimaryKeyIndex::createEmptyHashIndexFiles(PhysicalTypeID typeID, const std::string& fName,
-    VirtualFileSystem* vfs) {
-    FileHandle fileHandle(fName, FileHandle::O_PERSISTENT_FILE_CREATE_NOT_EXISTS, vfs);
-    fileHandle.addNewPages(NUM_HEADER_PAGES * NUM_HASH_INDEXES);
-    common::TypeUtils::visit(
-        typeID,
-        [&]<common::IndexHashable T>(T) {
-            if constexpr (std::same_as<T, common::ku_string_t>) {
-                OverflowFile::createEmptyFiles(StorageUtils::getOverflowFileName(fName), vfs);
-            }
-            for (auto i = 0u; i < NUM_HASH_INDEXES; i++) {
-                InMemHashIndex<T>::createEmptyIndexFiles(i, fileHandle);
-            }
-        },
-        [&](auto) { KU_UNREACHABLE; });
-}
 
 } // namespace storage
 } // namespace kuzu

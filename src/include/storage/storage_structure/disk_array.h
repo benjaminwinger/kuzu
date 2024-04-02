@@ -108,7 +108,7 @@ public:
     // Used when loading from file
     BaseDiskArrayInternal(FileHandle& fileHandle, DBFileID dbFileID,
         common::page_idx_t headerPageIdx, BufferManager* bufferManager, WAL* wal,
-        transaction::Transaction* transaction, bool bypassWAL = false);
+        transaction::Transaction* transaction, uint64_t elementSize, bool bypassWAL = false);
 
     virtual ~BaseDiskArrayInternal() = default;
 
@@ -291,7 +291,7 @@ public:
     BaseDiskArray(FileHandle& fileHandle, DBFileID dbFileID, common::page_idx_t headerPageIdx,
         BufferManager* bufferManager, WAL* wal, transaction::Transaction* transaction,
         bool bypassWAL = false)
-        : diskArray(fileHandle, dbFileID, headerPageIdx, bufferManager, wal, transaction,
+        : diskArray(fileHandle, dbFileID, headerPageIdx, bufferManager, wal, transaction, sizeof(U),
               bypassWAL) {}
 
     // Note: This function is to be used only by the WRITE trx.
@@ -365,8 +365,6 @@ class BaseInMemDiskArray : public BaseDiskArrayInternal {
 protected:
     BaseInMemDiskArray(FileHandle& fileHandle, common::page_idx_t headerPageIdx,
         uint64_t elementSize);
-    BaseInMemDiskArray(FileHandle& fileHandle, DBFileID dbFileID, common::page_idx_t headerPageIdx,
-        BufferManager* bufferManager, WAL* wal, transaction::Transaction* transaction);
 
 public:
     // [] operator can be used to update elements, e.g., diskArray[5] = 4, when building an

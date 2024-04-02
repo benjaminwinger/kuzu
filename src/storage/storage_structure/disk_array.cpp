@@ -48,15 +48,23 @@ BaseDiskArrayInternal::BaseDiskArrayInternal(FileHandle& fileHandle, page_idx_t 
 
 BaseDiskArrayInternal::BaseDiskArrayInternal(FileHandle& fileHandle, DBFileID dbFileID,
     page_idx_t headerPageIdx, BufferManager* bufferManager, WAL* wal,
-    transaction::Transaction* transaction, bool bypassWAL)
-    : fileHandle{fileHandle}, dbFileID{dbFileID}, headerPageIdx{headerPageIdx},
+    transaction::Transaction* transaction, uint64_t elementSize, bool bypassWAL)
+    : header{elementSize}, fileHandle{fileHandle}, dbFileID{dbFileID}, headerPageIdx{headerPageIdx},
       hasTransactionalUpdates{false}, bufferManager{bufferManager}, wal{wal},
       lastAPPageIdx{INVALID_PAGE_IDX}, lastPageOnDisk{INVALID_PAGE_IDX} {
     auto [fileHandleToPin, pageIdxToPin] = DBFileUtils::getFileHandleAndPhysicalPageIdxToPin(
         ku_dynamic_cast<FileHandle&, BMFileHandle&>(fileHandle), headerPageIdx, *wal,
         transaction->getType());
-    bufferManager->optimisticRead(*fileHandleToPin, pageIdxToPin,
-        [&](uint8_t* frame) -> void { memcpy(&header, frame, sizeof(DiskArrayHeader)); });
+    // This is fragile. The comparison only works if multiple disk arrays sharing the same file are
+    // initialized in order and all headers are initialized before any data is added Ideally there
+    // should be a parent structure handling the headers (which can also pack multiple of them into
+    // a single page to reduce bloat)
+    if (headerPageIdx < fileHandle.getNumPages()) {
+        bufferManager->optimisticRead(*fileHandleToPin, pageIdxToPin,
+            [&](uint8_t* frame) -> void { memcpy(&header, frame, sizeof(DiskArrayHeader)); });
+    } else {
+        fileHandle.addNewPage();
+    }
     headerForWriteTrx = header;
     if (this->header.firstPIPPageIdx != DBFileUtils::NULL_PAGE_IDX) {
         pips.emplace_back(fileHandle, header.firstPIPPageIdx);
@@ -263,23 +271,22 @@ void BaseDiskArrayInternal::checkpointOrRollbackInMemoryIfNecessaryNoLock(bool i
 
 void BaseDiskArrayInternal::prepareCommit() {
     auto& bmFileHandle = ku_dynamic_cast<FileHandle&, BMFileHandle&>(fileHandle);
-    // Update header if it has changed
     if (headerForWriteTrx != header) {
         DBFileUtils::updatePage(bmFileHandle, dbFileID, headerPageIdx,
-            false /* not inserting a new page */, *bufferManager, *wal,
-            [&](uint8_t* frame) -> void {
+            true /*no other data on this page*/, *bufferManager, *wal, [&](uint8_t* frame) -> void {
                 memcpy(frame, &headerForWriteTrx, sizeof(headerForWriteTrx));
             });
     }
     if (pipUpdates.updatedLastPIP.has_value()) {
-        DBFileUtils::updatePage(bmFileHandle, dbFileID, pipUpdates.updatedLastPIP->pipPageIdx, true,
-            *bufferManager, *wal, [&](auto* frame) {
+        DBFileUtils::updatePage(bmFileHandle, dbFileID, pipUpdates.updatedLastPIP->pipPageIdx,
+            true /*writing entire page*/, *bufferManager, *wal, [&](auto* frame) {
                 memcpy(frame, &pipUpdates.updatedLastPIP->pipContents, sizeof(PIP));
             });
     }
     for (auto& newPIP : pipUpdates.newPIPs) {
-        DBFileUtils::updatePage(bmFileHandle, dbFileID, newPIP.pipPageIdx, true, *bufferManager,
-            *wal, [&](auto* frame) { memcpy(frame, &newPIP.pipContents, sizeof(PIP)); });
+        DBFileUtils::updatePage(bmFileHandle, dbFileID, newPIP.pipPageIdx,
+            true /*writing entire page*/, *bufferManager, *wal,
+            [&](auto* frame) { memcpy(frame, &newPIP.pipContents, sizeof(PIP)); });
     }
 }
 
@@ -402,15 +409,6 @@ void BaseDiskArrayInternal::WriteIterator::getPage(common::page_idx_t newPageIdx
 
 BaseDiskArrayInternal::WriteIterator BaseDiskArrayInternal::iter_mut(uint64_t valueSize) {
     return BaseDiskArrayInternal::WriteIterator(valueSize, *this);
-}
-
-BaseInMemDiskArray::BaseInMemDiskArray(FileHandle& fileHandle, DBFileID dbFileID,
-    page_idx_t headerPageIdx, BufferManager* bufferManager, WAL* wal,
-    transaction::Transaction* transaction)
-    : BaseDiskArrayInternal(fileHandle, dbFileID, headerPageIdx, bufferManager, wal, transaction) {
-    for (page_idx_t apIdx = 0; apIdx < this->header.numAPs; ++apIdx) {
-        addInMemoryArrayPageAndReadFromFile(this->getAPPageIdxNoLock(apIdx));
-    }
 }
 
 BaseInMemDiskArray::BaseInMemDiskArray(FileHandle& fileHandle, page_idx_t headerPageIdx,

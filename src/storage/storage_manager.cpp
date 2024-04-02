@@ -70,7 +70,6 @@ void StorageManager::loadTables(bool readOnly, const Catalog& catalog) {
 
 void StorageManager::createNodeTable(table_id_t tableID, NodeTableCatalogEntry* nodeTableEntry) {
     nodesStatisticsAndDeletedIDs->addNodeStatisticsAndDeletedIDs(nodeTableEntry);
-    WALReplayerUtils::createEmptyHashIndexFiles(nodeTableEntry, wal->getDirectory(), vfs);
     tables[tableID] = std::make_unique<NodeTable>(dataFH.get(), metadataFH.get(), nodeTableEntry,
         nodesStatisticsAndDeletedIDs.get(), &memoryManager, wal, false /* readOnly */,
         enableCompression, vfs);

@@ -57,8 +57,6 @@ class InMemHashIndex final {
 public:
     explicit InMemHashIndex(OverflowFileHandle* overflowFileHandle);
 
-    static void createEmptyIndexFiles(uint64_t indexPos, FileHandle& fileHandle);
-
     // Reserves space for at least the specified number of elements.
     // This reserves space for numEntries in total, regardless of existing entries in the builder
     void reserve(uint32_t numEntries);
@@ -86,7 +84,8 @@ public:
     };
 
     inline bool nextChainedSlot(SlotIterator& iter) {
-        if (iter.slot->header.nextOvfSlotId != 0) {
+        if (iter.slot->header.nextOvfSlotId != SlotHeader::INVALID_SLOT) {
+            KU_ASSERT(iter.slot->header.nextOvfSlotId < oSlots->size());
             iter.slotInfo.slotId = iter.slot->header.nextOvfSlotId;
             iter.slotInfo.slotType = SlotType::OVF;
             iter.slot = getSlot(iter.slotInfo);

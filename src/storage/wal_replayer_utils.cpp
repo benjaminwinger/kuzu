@@ -15,17 +15,5 @@ void WALReplayerUtils::removeHashIndexFile(common::VirtualFileSystem* vfs, table
         StorageUtils::getNodeIndexFName(vfs, directory, tableID, FileVersionType::ORIGINAL));
 }
 
-void WALReplayerUtils::createEmptyHashIndexFiles(catalog::NodeTableCatalogEntry* nodeTableEntry,
-    const std::string& directory, VirtualFileSystem* vfs) {
-    auto pk = nodeTableEntry->getPrimaryKey();
-    auto dt = pk->getDataType();
-    if (dt->getLogicalTypeID() != LogicalTypeID::SERIAL) {
-        PrimaryKeyIndex::createEmptyHashIndexFiles(pk->getDataType()->getPhysicalType(),
-            StorageUtils::getNodeIndexFName(vfs, directory, nodeTableEntry->getTableID(),
-                FileVersionType::ORIGINAL),
-            vfs);
-    }
-}
-
 } // namespace storage
 } // namespace kuzu
