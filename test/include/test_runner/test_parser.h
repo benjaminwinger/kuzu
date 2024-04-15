@@ -125,12 +125,11 @@ private:
 
     inline std::string getParam(int paramIdx) { return currentToken.params[paramIdx]; }
 
-    TestStatement* extractStatement(TestStatement* currentStatement,
-        const std::string& testCaseName);
+    TestStatement* extractStatement(
+        TestStatement* currentStatement, const std::string& testCaseName);
     TestStatement* addNewStatement(std::string& name);
 
-    const std::string exportDBPath = TestHelper::appendKuzuRootPath(
-        TestHelper::TMP_TEST_DIR + std::string("export_db") + TestHelper::getMillisecondsSuffix());
+    const std::string exportDBPath = TestHelper::getTempDir("export_db").string();
     // Any value here will be replaced inside the .test files
     // in queries/statements and expected error message.
     // Example: ${KUZU_ROOT_DIRECTORY} will be replaced by

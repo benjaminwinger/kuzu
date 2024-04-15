@@ -15,8 +15,8 @@ public:
         const std::set<std::string>& connNames,
         std::vector<std::unique_ptr<TestStatement>> testStatements)
         : datasetType{datasetType}, dataset{std::move(dataset)}, bufferPoolSize{bufferPoolSize},
-          checkpointWaitTimeout{checkpointWaitTimeout}, testStatements{std::move(testStatements)},
-          connNames{connNames} {}
+          checkpointWaitTimeout{checkpointWaitTimeout},
+          testStatements{std::move(testStatements)}, connNames{connNames} {}
 
     void SetUp() override {
         setUpDataset();
@@ -64,9 +64,7 @@ private:
     std::string generateParquetTempDatasetPath() {
         std::string datasetName = dataset;
         std::replace(datasetName.begin(), datasetName.end(), '/', '_');
-        return TestHelper::appendKuzuRootPath(TestHelper::PARQUET_TEMP_DATASET_PATH + datasetName +
-                                              "_" + getTestGroupAndName() + "_" +
-                                              TestHelper::getMillisecondsSuffix());
+        return TestHelper::getTempDir(datasetName + "_parquet_" + getTestGroupAndName());
     }
 };
 
