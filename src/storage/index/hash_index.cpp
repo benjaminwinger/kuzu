@@ -193,10 +193,6 @@ size_t HashIndex<T>::append(const IndexBuffer<BufferKeyType>& buffer) {
             }
         }
     }
-    // Keep the same number of primary slots in the builder as we will eventually need when
-    // flushing to disk, so that we know each slot to write to
-    bulkInsertLocalStorage.reserve(
-        indexHeaderForWriteTrx->numEntries + bulkInsertLocalStorage.size() + buffer.size());
     return bulkInsertLocalStorage.append(buffer);
 }
 
@@ -477,17 +473,6 @@ void HashIndex<T>::mergeBulkInserts() {
     // TODO: one pass would also reduce locking when frames are unpinned,
     // which is useful if this can be paralellized
     reserve(bulkInsertLocalStorage.size());
-    KU_ASSERT(
-        bulkInsertLocalStorage.numPrimarySlots() == pSlots->getNumElements(TransactionType::WRITE));
-    KU_ASSERT(this->indexHeaderForWriteTrx->currentLevel ==
-              bulkInsertLocalStorage.getIndexHeader().currentLevel);
-    KU_ASSERT(this->indexHeaderForWriteTrx->levelHashMask ==
-              bulkInsertLocalStorage.getIndexHeader().levelHashMask);
-    KU_ASSERT(this->indexHeaderForWriteTrx->higherLevelHashMask ==
-              bulkInsertLocalStorage.getIndexHeader().higherLevelHashMask);
-    KU_ASSERT(this->indexHeaderForWriteTrx->nextSplitSlotId ==
-              bulkInsertLocalStorage.getIndexHeader().nextSplitSlotId);
-
     auto originalNumEntries = this->indexHeaderForWriteTrx->numEntries;
 
     // Storing as many slots in-memory as on-disk shouldn't be necessary (for one it makes memory
@@ -502,15 +487,25 @@ void HashIndex<T>::mergeBulkInserts() {
     // slots All new slots will be sequential and benefit from caching, but for existing randomly
     // accessed slots we just benefit from the interface. However, the two iterators would not be
     // able to pin the same page simultaneously
+    // Alternatively, cache new slots in memory and pushBack them at the end like in splitSlots
     auto diskOverflowSlotIterator = oSlots->iter_mut();
-    for (uint64_t slotId = 0; slotId < bulkInsertLocalStorage.numPrimarySlots(); slotId++) {
-        auto localSlot = typename InMemHashIndex<T>::SlotIterator(slotId, &bulkInsertLocalStorage);
-        // If mask is empty, skip this slot
-        if (!localSlot.slot->header.validityMask) {
-            // There should be no entries in the overflow slots, as we never leave gaps in the
-            // builder
-            continue;
-        }
+    for (uint64_t slotId = 0; slotId < pSlots->getNumElements(TransactionType::WRITE); slotId++) {
+        // TODO(bmwinger): There is a point where the number of entries in local storage is
+        // sufficiently small that it's better to either insert them individually using
+        // insertIntoPersistentIndex or group them into collections based on their destination slot
+        // and insert them in batches (probably not worthwhile)
+        // TODO(bmwinger): Determine what point the performance of mergeBulkInserts overlaps with
+        // the performance of insertIntoPersistentIndex That should also help with merging the two
+        // local storage types, as they could be stored together and dynamically switch between
+        // insertIntoPersistentIndex and mergeBulkInserts depending on the size of local storage
+        //
+        // Determine which local slot corresponds to the disk slot
+        // Note: this assumes that the slot id is a truncation of the hash.
+        auto localSlotId = HashIndexUtils::getPrimarySlotIdForHash(
+            bulkInsertLocalStorage.getIndexHeader(), slotId);
+        auto localSlot =
+            typename InMemHashIndex<T>::SlotIterator(localSlotId, &bulkInsertLocalStorage);
+        // TODO: Delay seeking until we know that this slot needs to be modified
         diskSlotIterator.seek(slotId);
         mergeSlot(localSlot, diskSlotIterator, diskOverflowSlotIterator, slotId);
     }
@@ -526,8 +521,23 @@ void HashIndex<T>::mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMer
     auto* diskSlot = &*diskSlotIterator;
     // Merge slot from local storage to existing slot
     do {
-        for (auto entryPos = 0u; entryPos < slotToMerge.slot->header.numEntries(); entryPos++) {
-            KU_ASSERT(slotToMerge.slot->header.isEntryValid(entryPos));
+        // Skip if there are no valid entries
+        if (!slotToMerge.slot->header.validityMask) {
+            continue;
+        }
+        for (auto entryPos = 0u; entryPos < getSlotCapacity<T>(); entryPos++) {
+            if (!slotToMerge.slot->header.isEntryValid(entryPos)) {
+                continue;
+            }
+            // Only copy entries that match the current primary slot on disk
+            // TODO: the hash should be stored in the local slot to avoid having to re-calculate it
+            auto key = slotToMerge.slot->entries[entryPos].key;
+            auto hash = hashStored(TransactionType::WRITE, key);
+            auto primarySlot =
+                HashIndexUtils::getPrimarySlotIdForHash(*indexHeaderForWriteTrx, hash);
+            if (primarySlot != diskSlotIterator.idx()) {
+                continue;
+            }
             // Find the next empty entry, or add a new slot if there are no more entries
             while (diskSlot->header.isEntryValid(diskEntryPos) ||
                    diskEntryPos >= getSlotCapacity<T>()) {
@@ -551,11 +561,8 @@ void HashIndex<T>::mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMer
             copyAndUpdateSlotHeader<const T&, true>(*diskSlot, diskEntryPos,
                 slotToMerge.slot->entries[entryPos].key, UINT32_MAX,
                 slotToMerge.slot->header.fingerprints[entryPos]);
+            slotToMerge.slot->header.setEntryInvalid(entryPos);
             KU_ASSERT([&]() {
-                auto hash =
-                    hashStored(TransactionType::WRITE, slotToMerge.slot->entries[entryPos].key);
-                auto primarySlot =
-                    HashIndexUtils::getPrimarySlotIdForHash(*indexHeaderForWriteTrx, hash);
                 KU_ASSERT(slotToMerge.slot->header.fingerprints[entryPos] ==
                           HashIndexUtils::getFingerprintForHash(hash));
                 KU_ASSERT(primarySlot == slotId);
