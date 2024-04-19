@@ -40,6 +40,9 @@ void IndexBuilderGlobalQueues::maybeConsumeIndex(size_t index) {
             std::unique_lock lck{mutexes[index], std::adopt_lock};
             IndexBuffer<T> buffer;
             while (queues.array[index].pop(buffer)) {
+                if (buffer.empty()) {
+                    continue;
+                }
                 auto numValuesInserted = pkIndex->appendWithIndexPos(buffer, index);
                 if (numValuesInserted < buffer.size()) {
                     if constexpr (std::same_as<T, std::string>) {

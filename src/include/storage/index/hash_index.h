@@ -65,6 +65,10 @@ public:
 // S is the stored type, which is usually the same as T, with the exception of strings
 template<typename T>
 class HashIndex final : public OnDiskHashIndex {
+    static_assert(getSlotCapacity<T>() <= SlotHeader::FINGERPRINT_CAPACITY);
+    // Size of the validity mask
+    static_assert(getSlotCapacity<T>() <= sizeof(SlotHeader().validityMask) * 8);
+    static_assert(getSlotCapacity<T>() <= std::numeric_limits<entry_pos_t>::max() + 1);
 
 public:
     HashIndex(const DBFileIDAndName& dbFileIDAndName,
@@ -125,7 +129,7 @@ private:
     // Resizes the on-disk index to support the given number of new entries
     void reserve(uint64_t newEntries);
     void mergeBulkInserts();
-    void mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMerge,
+    void mergeSlot(std::vector<InMemSlotEntry<T>>& slotToMerge,
         typename BaseDiskArray<Slot<T>>::WriteIterator& diskSlotIterator,
         typename BaseDiskArray<Slot<T>>::WriteIterator& diskOverflowSlotIterator, slot_id_t slotId);
 

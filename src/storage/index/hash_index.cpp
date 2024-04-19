@@ -503,75 +503,63 @@ void HashIndex<T>::mergeBulkInserts() {
         // Note: this assumes that the slot id is a truncation of the hash.
         auto localSlotId = HashIndexUtils::getPrimarySlotIdForHash(
             bulkInsertLocalStorage.getIndexHeader(), slotId);
-        auto localSlot =
-            typename InMemHashIndex<T>::SlotIterator(localSlotId, &bulkInsertLocalStorage);
-        // TODO: Delay seeking until we know that this slot needs to be modified
-        diskSlotIterator.seek(slotId);
-        mergeSlot(localSlot, diskSlotIterator, diskOverflowSlotIterator, slotId);
+        auto& localSlot = bulkInsertLocalStorage.getSlot(localSlotId);
+        if (!localSlot.empty()) {
+            // TODO: Delay seeking until we know that this slot needs to be modified
+            diskSlotIterator.seek(slotId);
+            mergeSlot(localSlot, diskSlotIterator, diskOverflowSlotIterator, slotId);
+        }
     }
     KU_ASSERT(originalNumEntries + bulkInsertLocalStorage.getIndexHeader().numEntries ==
               indexHeaderForWriteTrx->numEntries);
 }
 
 template<typename T>
-void HashIndex<T>::mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMerge,
+void HashIndex<T>::mergeSlot(std::vector<InMemSlotEntry<T>>& slotToMerge,
     typename BaseDiskArray<Slot<T>>::WriteIterator& diskSlotIterator,
     typename BaseDiskArray<Slot<T>>::WriteIterator& diskOverflowSlotIterator, slot_id_t slotId) {
     slot_id_t diskEntryPos = 0u;
     auto* diskSlot = &*diskSlotIterator;
     // Merge slot from local storage to existing slot
-    do {
-        // Skip if there are no valid entries
-        if (!slotToMerge.slot->header.validityMask) {
+    for (size_t entryPos = 0; entryPos < slotToMerge.size(); entryPos++) {
+        // Only copy entries that match the current primary slot on disk
+        auto& entry = slotToMerge[entryPos];
+        auto primarySlot =
+            HashIndexUtils::getPrimarySlotIdForHash(*indexHeaderForWriteTrx, entry.hash);
+        if (primarySlot != slotId) {
             continue;
         }
-        for (auto entryPos = 0u; entryPos < getSlotCapacity<T>(); entryPos++) {
-            if (!slotToMerge.slot->header.isEntryValid(entryPos)) {
-                continue;
-            }
-            // Only copy entries that match the current primary slot on disk
-            // TODO: the hash should be stored in the local slot to avoid having to re-calculate it
-            auto key = slotToMerge.slot->entries[entryPos].key;
-            auto hash = hashStored(TransactionType::WRITE, key);
-            auto primarySlot =
-                HashIndexUtils::getPrimarySlotIdForHash(*indexHeaderForWriteTrx, hash);
-            if (primarySlot != diskSlotIterator.idx()) {
-                continue;
-            }
-            // Find the next empty entry, or add a new slot if there are no more entries
-            while (diskSlot->header.isEntryValid(diskEntryPos) ||
-                   diskEntryPos >= getSlotCapacity<T>()) {
-                diskEntryPos++;
-                if (diskEntryPos >= getSlotCapacity<T>()) {
-                    if (diskSlot->header.nextOvfSlotId == 0) {
-                        // If there are no more disk slots in this chain, we need to add one
-                        diskSlot->header.nextOvfSlotId = diskOverflowSlotIterator.size();
-                        // This may invalidate diskSlot
-                        diskOverflowSlotIterator.pushBack(Slot<T>());
-                    } else {
-                        diskOverflowSlotIterator.seek(diskSlot->header.nextOvfSlotId);
-                    }
-                    diskSlot = &*diskOverflowSlotIterator;
-                    // Check to make sure we're not looping
-                    KU_ASSERT(diskOverflowSlotIterator.idx() != diskSlot->header.nextOvfSlotId);
-                    diskEntryPos = 0;
-                }
-            }
-            KU_ASSERT(diskEntryPos < getSlotCapacity<T>());
-            copyAndUpdateSlotHeader<const T&, true>(*diskSlot, diskEntryPos,
-                slotToMerge.slot->entries[entryPos].key, UINT32_MAX,
-                slotToMerge.slot->header.fingerprints[entryPos]);
-            slotToMerge.slot->header.setEntryInvalid(entryPos);
-            KU_ASSERT([&]() {
-                KU_ASSERT(slotToMerge.slot->header.fingerprints[entryPos] ==
-                          HashIndexUtils::getFingerprintForHash(hash));
-                KU_ASSERT(primarySlot == slotId);
-                return true;
-            }());
-            indexHeaderForWriteTrx->numEntries++;
+        // Find the next empty entry, or add a new slot if there are no more entries
+        while (
+            diskSlot->header.isEntryValid(diskEntryPos) || diskEntryPos >= getSlotCapacity<T>()) {
             diskEntryPos++;
+            if (diskEntryPos >= getSlotCapacity<T>()) {
+                if (diskSlot->header.nextOvfSlotId == 0) {
+                    // If there are no more disk slots in this chain, we need to add one
+                    diskSlot->header.nextOvfSlotId = diskOverflowSlotIterator.size();
+                    // This may invalidate diskSlot
+                    diskOverflowSlotIterator.pushBack(Slot<T>());
+                } else {
+                    diskOverflowSlotIterator.seek(diskSlot->header.nextOvfSlotId);
+                }
+                diskSlot = &*diskOverflowSlotIterator;
+                // Check to make sure we're not looping
+                KU_ASSERT(diskOverflowSlotIterator.idx() != diskSlot->header.nextOvfSlotId);
+                diskEntryPos = 0;
+            }
         }
-    } while (bulkInsertLocalStorage.nextChainedSlot(slotToMerge));
+        KU_ASSERT(diskEntryPos < getSlotCapacity<T>());
+        copyAndUpdateSlotHeader<const T&, true>(*diskSlot, diskEntryPos, entry.key, UINT32_MAX,
+            HashIndexUtils::getFingerprintForHash(entry.hash));
+        indexHeaderForWriteTrx->numEntries++;
+        diskEntryPos++;
+
+        if (entryPos != slotToMerge.size() - 1) {
+            std::swap(entry, slotToMerge.back());
+            entryPos--;
+        }
+        slotToMerge.pop_back();
+    }
 }
 
 template<typename T>
