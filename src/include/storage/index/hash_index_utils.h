@@ -24,6 +24,8 @@ enum class SlotType : uint8_t { PRIMARY = 0, OVF = 1 };
 struct SlotInfo {
     slot_id_t slotId{UINT64_MAX};
     SlotType slotType{SlotType::PRIMARY};
+
+    bool operator==(const SlotInfo&) const = default;
 };
 
 class HashIndexUtils {

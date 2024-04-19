@@ -49,10 +49,9 @@ using IndexBuffer = common::StaticVector<std::pair<T, common::offset_t>, BUFFER_
 // (see BufferKeyType and Key)
 template<typename T>
 class InMemHashIndex final {
-    static_assert(getSlotCapacity<T>() <= SlotHeader::FINGERPRINT_CAPACITY);
     // Size of the validity mask
-    static_assert(getSlotCapacity<T>() <= sizeof(SlotHeader().validityMask) * 8);
-    static_assert(getSlotCapacity<T>() <= std::numeric_limits<entry_pos_t>::max() + 1);
+    static_assert(getInMemSlotCapacity<T>() <= sizeof(InMemSlotHeader().validityMask) * 8);
+    static_assert(getInMemSlotCapacity<T>() <= std::numeric_limits<entry_pos_t>::max() + 1);
 
 public:
     explicit InMemHashIndex(OverflowFileHandle* overflowFileHandle);
@@ -78,15 +77,15 @@ public:
 
     inline void clear() {
         indexHeader = HashIndexHeader();
-        pSlots = std::make_unique<InMemDiskArrayBuilder<Slot<T>>>(dummy, 0, 0, true);
-        oSlots = std::make_unique<InMemDiskArrayBuilder<Slot<T>>>(dummy, 0, 1, true);
+        pSlots = std::make_unique<InMemDiskArrayBuilder<InMemSlot<T>>>(dummy, 0, 0, true);
+        oSlots = std::make_unique<InMemDiskArrayBuilder<InMemSlot<T>>>(dummy, 0, 1, true);
     }
 
     struct SlotIterator {
         explicit SlotIterator(slot_id_t newSlotId, InMemHashIndex<T>* builder)
             : slotInfo{newSlotId, SlotType::PRIMARY}, slot(builder->getSlot(slotInfo)) {}
         SlotInfo slotInfo;
-        Slot<T>* slot;
+        InMemSlot<T>* slot;
     };
 
     inline bool nextChainedSlot(SlotIterator& iter) {
@@ -106,7 +105,7 @@ public:
 private:
     // Assumes that space has already been allocated for the entry
     bool appendInternal(Key key, common::offset_t value, common::hash_t hash);
-    Slot<T>* getSlot(const SlotInfo& slotInfo);
+    InMemSlot<T>* getSlot(const SlotInfo& slotInfo);
 
     uint32_t allocatePSlots(uint32_t numSlotsToAllocate);
     uint32_t allocateAOSlot();
@@ -122,26 +121,20 @@ private:
         return keyToLookup == keyInEntry;
     }
 
-    inline void insert(Key key, Slot<T>* slot, uint8_t entryPos, common::offset_t value,
-        uint8_t fingerprint) {
-        auto& entry = slot->entries[entryPos];
-        entry.key = key;
-        entry.value = value;
-        slot->header.setEntryValid(entryPos, fingerprint);
-        KU_ASSERT(HashIndexUtils::getFingerprintForHash(HashIndexUtils::hash(key)) == fingerprint);
+    inline void insert(Key key, InMemSlot<T>* slot, uint8_t entryPos, common::offset_t value,
+        common::hash_t hash) {
+        slot->entries[entryPos] = {key, value};
+        slot->header.setEntryValid(entryPos);
+        slot->hashes[entryPos] = hash;
     }
-    void copy(const SlotEntry<T>& oldEntry, slot_id_t newSlotId, uint8_t fingerprint);
-    void insertToNewOvfSlot(Key key, Slot<T>* previousSlot, common::offset_t offset,
-        uint8_t fingerprint);
-    common::hash_t hashStored(const T& key) const;
+    void insertToNewOvfSlot(Key key, InMemSlot<T>* previousSlot, common::offset_t offset,
+        common::hash_t hash);
 
 private:
-    // TODO: might be more efficient to use a vector for each slot since this is now only needed
-    // in-memory and it would remove the need to handle overflow slots.
     OverflowFileHandle* overflowFileHandle;
     FileHandle dummy;
-    std::unique_ptr<InMemDiskArrayBuilder<Slot<T>>> pSlots;
-    std::unique_ptr<InMemDiskArrayBuilder<Slot<T>>> oSlots;
+    std::unique_ptr<InMemDiskArrayBuilder<InMemSlot<T>>> pSlots;
+    std::unique_ptr<InMemDiskArrayBuilder<InMemSlot<T>>> oSlots;
     HashIndexHeader indexHeader;
 };
 

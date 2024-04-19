@@ -384,7 +384,7 @@ void HashIndex<T>::splitSlots(HashIndexHeader& header, slot_id_t numSlotsToSplit
                 hash_t hash = this->hashStored(TransactionType::WRITE, key);
                 auto newSlotId = hash & header.higherLevelHashMask;
                 if (newSlotId != header.nextSplitSlotId) {
-                    KU_ASSERT(newSlotId == newSlotIterator.idx());
+                    KU_ASSERT_EQ(newSlotId, newSlotIterator.idx());
                     copyAndUpdateSlotHeader<const T&, true>(*newSlot, newEntryPos,
                         originalSlot->entries[originalEntryPos].key, UINT32_MAX,
                         originalSlot->header.fingerprints[originalEntryPos]);
@@ -501,7 +501,7 @@ void HashIndex<T>::mergeBulkInserts() {
         //
         // Determine which local slot corresponds to the disk slot
         // Note: this assumes that the slot id is a truncation of the hash.
-        auto localSlotId = HashIndexUtils::getPrimarySlotIdForHash(
+        const auto localSlotId = HashIndexUtils::getPrimarySlotIdForHash(
             bulkInsertLocalStorage.getIndexHeader(), slotId);
         auto localSlot =
             typename InMemHashIndex<T>::SlotIterator(localSlotId, &bulkInsertLocalStorage);
@@ -509,8 +509,38 @@ void HashIndex<T>::mergeBulkInserts() {
         diskSlotIterator.seek(slotId);
         mergeSlot(localSlot, diskSlotIterator, diskOverflowSlotIterator, slotId);
     }
-    KU_ASSERT(originalNumEntries + bulkInsertLocalStorage.getIndexHeader().numEntries ==
-              indexHeaderForWriteTrx->numEntries);
+    // Due to the difference in capacity between the in-mem slots and on-disk slots, as well as
+    // over-estimation, the local storage may have more primary slots than the on-disk storage. In
+    // that case, the first pass should still be correct for the slots it accesses, and the
+    // remaining are processed here using the local slotId, truncated as appropriate to match the
+    // on-disk header.
+    for (uint64_t localSlotId = pSlots->getNumElements(TransactionType::WRITE);
+         localSlotId < bulkInsertLocalStorage.numPrimarySlots(); localSlotId++) {
+        const auto diskSlotId =
+            HashIndexUtils::getPrimarySlotIdForHash(*indexHeaderForWriteTrx, localSlotId);
+        auto localSlot =
+            typename InMemHashIndex<T>::SlotIterator(localSlotId, &bulkInsertLocalStorage);
+        // TODO: Delay seeking until we know that this slot needs to be modified
+        diskSlotIterator.seek(diskSlotId);
+        mergeSlot(localSlot, diskSlotIterator, diskOverflowSlotIterator, diskSlotId);
+    }
+    KU_ASSERT([&]() {
+        for (uint64_t slotId = 0; slotId < bulkInsertLocalStorage.numPrimarySlots(); slotId++) {
+            auto localSlot =
+                typename InMemHashIndex<T>::SlotIterator(slotId, &bulkInsertLocalStorage);
+            do {
+                for (auto entryPos = 0u; entryPos < getInMemSlotCapacity<T>(); entryPos++) {
+                    KU_ASSERT_EQ(
+                        hashStored(TransactionType::WRITE, localSlot.slot->entries[entryPos].key),
+                        localSlot.slot->hashes[entryPos]);
+                }
+                KU_ASSERT(localSlot.slot->header.validityMask == 0);
+            } while (bulkInsertLocalStorage.nextChainedSlot(localSlot));
+        }
+        return true;
+    }());
+    KU_ASSERT_EQ(originalNumEntries + bulkInsertLocalStorage.getIndexHeader().numEntries,
+        indexHeaderForWriteTrx->numEntries);
 }
 
 template<typename T>
@@ -525,17 +555,16 @@ void HashIndex<T>::mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMer
         if (!slotToMerge.slot->header.validityMask) {
             continue;
         }
-        for (auto entryPos = 0u; entryPos < getSlotCapacity<T>(); entryPos++) {
+        // Maybe use a counter instead of a validity mask, which would also use less space
+        for (auto entryPos = 0u; entryPos < getInMemSlotCapacity<T>(); entryPos++) {
             if (!slotToMerge.slot->header.isEntryValid(entryPos)) {
                 continue;
             }
             // Only copy entries that match the current primary slot on disk
-            // TODO: the hash should be stored in the local slot to avoid having to re-calculate it
-            auto key = slotToMerge.slot->entries[entryPos].key;
-            auto hash = hashStored(TransactionType::WRITE, key);
-            auto primarySlot =
+            const auto& hash = slotToMerge.slot->hashes[entryPos];
+            const auto primarySlot =
                 HashIndexUtils::getPrimarySlotIdForHash(*indexHeaderForWriteTrx, hash);
-            if (primarySlot != diskSlotIterator.idx()) {
+            if (primarySlot != slotId) {
                 continue;
             }
             // Find the next empty entry, or add a new slot if there are no more entries
@@ -560,14 +589,8 @@ void HashIndex<T>::mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMer
             KU_ASSERT(diskEntryPos < getSlotCapacity<T>());
             copyAndUpdateSlotHeader<const T&, true>(*diskSlot, diskEntryPos,
                 slotToMerge.slot->entries[entryPos].key, UINT32_MAX,
-                slotToMerge.slot->header.fingerprints[entryPos]);
+                HashIndexUtils::getFingerprintForHash(hash));
             slotToMerge.slot->header.setEntryInvalid(entryPos);
-            KU_ASSERT([&]() {
-                KU_ASSERT(slotToMerge.slot->header.fingerprints[entryPos] ==
-                          HashIndexUtils::getFingerprintForHash(hash));
-                KU_ASSERT(primarySlot == slotId);
-                return true;
-            }());
             indexHeaderForWriteTrx->numEntries++;
             diskEntryPos++;
         }
