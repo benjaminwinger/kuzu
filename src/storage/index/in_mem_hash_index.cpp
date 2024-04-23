@@ -148,24 +148,15 @@ bool InMemHashIndex<T>::appendInternal(Key key, common::offset_t value, common::
         // The builder never keeps holes and doesn't support deletions
         // Check the valid entries, then insert at the end if we don't find one which matches
         auto numEntries = iter.slot->header.numEntries();
-        size_t fingerprintsMatched = 0;
-        // Check fingerprint matches and equality separately to take advantage of auto-vectorization
-        std::array<bool, getSlotCapacity<T>()> matched;
         KU_ASSERT(numEntries == std::countr_one(iter.slot->header.validityMask));
         for (auto entryPos = 0u; entryPos < numEntries; entryPos++) {
-            bool match = iter.slot->header.fingerprints[entryPos] == fingerprint;
-            matched[entryPos] = fingerprint;
-            fingerprintsMatched += match ? 1 : 0;
-        }
-        if (fingerprintsMatched) {
-            for (auto entryPos = 0u; entryPos < numEntries; entryPos++) {
-                if (matched[entryPos] && equals(key, iter.slot->entries[entryPos].key)) {
-                    // Value already exists
-                    return false;
-                }
+            if (iter.slot->header.fingerprints[entryPos] == fingerprint &&
+                equals(key, iter.slot->entries[entryPos].key)) {
+                // Value already exists
+                return false;
             }
         }
-        if (numEntries < getSlotCapacity<T>()) {
+        if (numEntries < getSlotCapacity<T>()) [[likely]] {
             insert(key, iter.slot, numEntries, value, fingerprint);
             this->indexHeader.numEntries++;
             return true;
@@ -189,9 +180,10 @@ bool InMemHashIndex<T>::lookup(Key key, offset_t& result) {
     auto slotId = HashIndexUtils::getPrimarySlotIdForHash(this->indexHeader, hashValue);
     SlotIterator iter(slotId, this);
     do {
-        for (auto entryPos = 0u; entryPos < getSlotCapacity<T>(); entryPos++) {
-            if (iter.slot->header.isEntryValid(entryPos) &&
-                iter.slot->header.fingerprints[entryPos] == fingerprint &&
+        auto numEntries = iter.slot->header.numEntries();
+        KU_ASSERT(numEntries == std::countr_one(iter.slot->header.validityMask));
+        for (auto entryPos = 0u; entryPos < numEntries; entryPos++) {
+            if (iter.slot->header.fingerprints[entryPos] == fingerprint &&
                 equals(key, iter.slot->entries[entryPos].key)) {
                 // Value already exists
                 result = iter.slot->entries[entryPos].value;
