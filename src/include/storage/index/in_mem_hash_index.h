@@ -102,6 +102,11 @@ public:
 
     inline HashIndexHeader getIndexHeader() { return indexHeader; }
 
+    // Searches for a free space starting from the given entry position and copies the source entry
+    // to that free spot
+    void copy(SlotIterator& oldIter, entry_pos_t oldEntryPos, SlotIterator& newIter,
+        entry_pos_t& newEntryPos);
+
 private:
     // Assumes that space has already been allocated for the entry
     bool appendInternal(Key key, common::offset_t value, common::hash_t hash);
@@ -109,6 +114,7 @@ private:
 
     uint32_t allocatePSlots(uint32_t numSlotsToAllocate);
     uint32_t allocateAOSlot();
+
     /*
      * When a slot is split, we add a new slot, which ends up with an
      * id equal to the slot to split's ID + (1 << header.currentLevel).

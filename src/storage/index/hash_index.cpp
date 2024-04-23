@@ -549,22 +549,36 @@ void HashIndex<T>::mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMer
     typename BaseDiskArray<Slot<T>>::WriteIterator& diskOverflowSlotIterator, slot_id_t slotId) {
     slot_id_t diskEntryPos = 0u;
     auto* diskSlot = &*diskSlotIterator;
+    auto slotToReinsert = slotToMerge;
+    entry_pos_t entryPosToReinsert = 0;
     // Merge slot from local storage to existing slot
     do {
         // Skip if there are no valid entries
         if (!slotToMerge.slot->header.validityMask) {
             continue;
         }
-        // Maybe use a counter instead of a validity mask, which would also use less space
-        for (auto entryPos = 0u; entryPos < getInMemSlotCapacity<T>(); entryPos++) {
+        // The in memory hash index never leaves gaps
+        // This function
+        auto numEntries = slotToMerge.slot->header.numEntries();
+        bool gaps = false;
+        KU_ASSERT_EQ(slotToMerge.slot->header.numEntries(),
+            std::countr_one(slotToMerge.slot->header.validityMask));
+        for (auto entryPos = 0u; entryPos < numEntries; entryPos++) {
             if (!slotToMerge.slot->header.isEntryValid(entryPos)) {
-                continue;
+                // Last entry
+                KU_ASSERT_EQ(slotToMerge.slot->header.numEntries(),
+                    std::countr_one(slotToMerge.slot->header.validityMask));
+                return;
             }
             // Only copy entries that match the current primary slot on disk
             const auto& hash = slotToMerge.slot->hashes[entryPos];
             const auto primarySlot =
                 HashIndexUtils::getPrimarySlotIdForHash(*indexHeaderForWriteTrx, hash);
             if (primarySlot != slotId) {
+                if (gaps) {
+                    bulkInsertLocalStorage.copy(slotToMerge, entryPos, slotToReinsert,
+                        entryPosToReinsert);
+                }
                 continue;
             }
             // Find the next empty entry, or add a new slot if there are no more entries
@@ -592,8 +606,11 @@ void HashIndex<T>::mergeSlot(typename InMemHashIndex<T>::SlotIterator& slotToMer
                 HashIndexUtils::getFingerprintForHash(hash));
             slotToMerge.slot->header.setEntryInvalid(entryPos);
             indexHeaderForWriteTrx->numEntries++;
+            gaps = true;
             diskEntryPos++;
         }
+        KU_ASSERT_EQ(slotToMerge.slot->header.numEntries(),
+            std::countr_one(slotToMerge.slot->header.validityMask));
     } while (bulkInsertLocalStorage.nextChainedSlot(slotToMerge));
 }
 

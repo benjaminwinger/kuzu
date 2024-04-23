@@ -66,6 +66,22 @@ void InMemHashIndex<T>::reserve(uint32_t numEntries_) {
 }
 
 template<typename T>
+void InMemHashIndex<T>::copy(SlotIterator& oldIter, entry_pos_t oldEntryPos, SlotIterator& newIter,
+    entry_pos_t& newEntryPos) {
+    while (newIter.slot->header.isEntryValid(newEntryPos)) {
+        newEntryPos++;
+        if (newEntryPos >= getInMemSlotCapacity<T>()) {
+            newEntryPos = 0;
+            nextChainedSlot(newIter);
+        }
+    }
+    newIter.slot->hashes[newEntryPos] = oldIter.slot->hashes[oldEntryPos];
+    newIter.slot->entries[newEntryPos] = oldIter.slot->entries[oldEntryPos];
+    newIter.slot->header.setEntryValid(newEntryPos);
+    oldIter.slot->header.setEntryInvalid(oldEntryPos);
+}
+
+template<typename T>
 void InMemHashIndex<T>::splitSlot(HashIndexHeader& header) {
     // Add new slot
     allocatePSlots(1);
@@ -75,7 +91,7 @@ void InMemHashIndex<T>::splitSlot(HashIndexHeader& header) {
     // Use a separate iterator to track the first empty position so that the gapless entries can be
     // maintained
     SlotIterator originalSlotForInsert(header.nextSplitSlotId, this);
-    auto entryPosToInsert = 0u;
+    entry_pos_t entryPosToInsert = 0u;
     SlotIterator newSlot(pSlots->getNumElements() - 1, this);
     entry_pos_t newSlotPos = 0;
     bool gaps = false;
@@ -108,17 +124,7 @@ void InMemHashIndex<T>::splitSlot(HashIndexHeader& header) {
             } else if (gaps) {
                 // If we have created a gap previously, move the entry to the first gap to avoid
                 // leaving gaps
-                while (originalSlotForInsert.slot->header.isEntryValid(entryPosToInsert)) {
-                    entryPosToInsert++;
-                    if (entryPosToInsert >= getInMemSlotCapacity<T>()) {
-                        entryPosToInsert = 0;
-                        nextChainedSlot(originalSlotForInsert);
-                    }
-                }
-                originalSlotForInsert.slot->hashes[entryPosToInsert] = hash;
-                originalSlotForInsert.slot->entries[entryPosToInsert] = entry;
-                originalSlotForInsert.slot->header.setEntryValid(entryPosToInsert);
-                originalSlot.slot->header.setEntryInvalid(entryPos);
+                copy(originalSlot, entryPos, originalSlotForInsert, entryPosToInsert);
             }
         }
         KU_ASSERT(originalSlot.slot->header.numEntries() ==
