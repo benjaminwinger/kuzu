@@ -159,20 +159,21 @@ bool InMemHashIndex<T>::appendInternal(Key key, common::offset_t value, common::
     auto slotID = HashIndexUtils::getPrimarySlotIdForHash(this->indexHeader, hash);
     SlotIterator iter(slotID, this);
     do {
-        for (auto entryPos = 0u; entryPos < getSlotCapacity<T>(); entryPos++) {
-            if (!iter.slot->header.isEntryValid(entryPos)) {
-                // Insert to this position
-                // The builder never keeps holes and doesn't support deletions, so this must be the
-                // end of the valid entries in this primary slot and the entry does not already
-                // exist
-                insert(key, iter.slot, entryPos, value, fingerprint);
-                this->indexHeader.numEntries++;
-                return true;
-            } else if (iter.slot->header.fingerprints[entryPos] == fingerprint &&
-                       equals(key, iter.slot->entries[entryPos].key)) {
+        // The builder never keeps holes and doesn't support deletions
+        // Check the valid entries, then insert at the end if we don't find one which matches
+        auto numEntries = iter.slot->header.numEntries();
+        KU_ASSERT(numEntries == std::countr_one(iter.slot->header.validityMask));
+        for (auto entryPos = 0u; entryPos < numEntries; entryPos++) {
+            if (iter.slot->header.fingerprints[entryPos] == fingerprint &&
+                equals(key, iter.slot->entries[entryPos].key)) {
                 // Value already exists
                 return false;
             }
+        }
+        if (numEntries < getSlotCapacity<T>()) [[likely]] {
+            insert(key, iter.slot, numEntries, value, fingerprint);
+            this->indexHeader.numEntries++;
+            return true;
         }
     } while (nextChainedSlot(iter));
     // Didn't find an available slot. Insert a new one
@@ -193,9 +194,10 @@ bool InMemHashIndex<T>::lookup(Key key, offset_t& result) {
     auto slotId = HashIndexUtils::getPrimarySlotIdForHash(this->indexHeader, hashValue);
     SlotIterator iter(slotId, this);
     do {
-        for (auto entryPos = 0u; entryPos < getSlotCapacity<T>(); entryPos++) {
-            if (iter.slot->header.isEntryValid(entryPos) &&
-                iter.slot->header.fingerprints[entryPos] == fingerprint &&
+        auto numEntries = iter.slot->header.numEntries();
+        KU_ASSERT(numEntries == std::countr_one(iter.slot->header.validityMask));
+        for (auto entryPos = 0u; entryPos < numEntries; entryPos++) {
+            if (iter.slot->header.fingerprints[entryPos] == fingerprint &&
                 equals(key, iter.slot->entries[entryPos].key)) {
                 // Value already exists
                 result = iter.slot->entries[entryPos].value;
