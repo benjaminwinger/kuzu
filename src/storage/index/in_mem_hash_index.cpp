@@ -145,20 +145,30 @@ bool InMemHashIndex<T>::appendInternal(Key key, common::offset_t value, common::
     auto slotID = HashIndexUtils::getPrimarySlotIdForHash(this->indexHeader, hash);
     SlotIterator iter(slotID, this);
     do {
-        for (auto entryPos = 0u; entryPos < getSlotCapacity<T>(); entryPos++) {
-            if (!iter.slot->header.isEntryValid(entryPos)) {
-                // Insert to this position
-                // The builder never keeps holes and doesn't support deletions, so this must be the
-                // end of the valid entries in this primary slot and the entry does not already
-                // exist
-                insert(key, iter.slot, entryPos, value, fingerprint);
-                this->indexHeader.numEntries++;
-                return true;
-            } else if (iter.slot->header.fingerprints[entryPos] == fingerprint &&
-                       equals(key, iter.slot->entries[entryPos].key)) {
-                // Value already exists
-                return false;
+        // The builder never keeps holes and doesn't support deletions
+        // Check the valid entries, then insert at the end if we don't find one which matches
+        auto numEntries = iter.slot->header.numEntries();
+        size_t fingerprintsMatched = 0;
+        // Check fingerprint matches and equality separately to take advantage of auto-vectorization
+        std::array<bool, getSlotCapacity<T>()> matched;
+        KU_ASSERT(numEntries == std::countr_one(iter.slot->header.validityMask));
+        for (auto entryPos = 0u; entryPos < numEntries; entryPos++) {
+            bool match = iter.slot->header.fingerprints[entryPos] == fingerprint;
+            matched[entryPos] = fingerprint;
+            fingerprintsMatched += match ? 1 : 0;
+        }
+        if (fingerprintsMatched) {
+            for (auto entryPos = 0u; entryPos < numEntries; entryPos++) {
+                if (matched[entryPos] && equals(key, iter.slot->entries[entryPos].key)) {
+                    // Value already exists
+                    return false;
+                }
             }
+        }
+        if (numEntries < getSlotCapacity<T>()) {
+            insert(key, iter.slot, numEntries, value, fingerprint);
+            this->indexHeader.numEntries++;
+            return true;
         }
     } while (nextChainedSlot(iter));
     // Didn't find an available slot. Insert a new one
