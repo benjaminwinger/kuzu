@@ -226,19 +226,6 @@ void WALReplayer::replayCopyTableRecord(const WALRecord& walRecord) {
     if (isCheckpoint) {
         if (!isRecovering) {
             // CHECKPOINT.
-            // If we are not recovering, i.e., we are checkpointing during normal execution,
-            // then we need to update the nodeTable because the actual columns and lists
-            // files have been changed during checkpoint. So the in memory
-            // fileHandles are obsolete and should be reconstructed (e.g. since the numPages
-            // have likely changed they need to reconstruct their page locks).
-            auto catalogEntry = catalog->getTableCatalogEntry(&DUMMY_READ_TRANSACTION, tableID);
-            if (catalogEntry->getType() == CatalogEntryType::NODE_TABLE_ENTRY) {
-                auto nodeTableEntry =
-                    ku_dynamic_cast<TableCatalogEntry*, NodeTableCatalogEntry*>(catalogEntry);
-                auto nodeTable =
-                    ku_dynamic_cast<Table*, NodeTable*>(storageManager->getTable(tableID));
-                nodeTable->initializePKIndex(nodeTableEntry, false /* readOnly */, vfs);
-            }
         } else {
             // RECOVERY.
             if (wal->isLastLoggedRecordCommit()) {

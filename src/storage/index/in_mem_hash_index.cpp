@@ -36,6 +36,14 @@ InMemHashIndex<T>::InMemHashIndex(OverflowFileHandle* overflowFileHandle)
 }
 
 template<typename T>
+void InMemHashIndex<T>::clear() {
+    indexHeader = HashIndexHeader(TypeUtils::getPhysicalTypeIDForType<T>());
+    pSlots = std::make_unique<InMemDiskArrayBuilder<Slot<T>>>(dummy, 0, 0, true);
+    oSlots = std::make_unique<InMemDiskArrayBuilder<Slot<T>>>(dummy, 0, 1, true);
+    allocateSlots(BufferPoolConstants::PAGE_4KB_SIZE / pSlots->getAlignedElementSize());
+}
+
+template<typename T>
 void InMemHashIndex<T>::allocateSlots(uint32_t newNumSlots) {
     auto numSlotsOfCurrentLevel = 1u << this->indexHeader.currentLevel;
     while ((numSlotsOfCurrentLevel << 1) <= newNumSlots) {
@@ -129,11 +137,7 @@ void InMemHashIndex<T>::splitSlot(HashIndexHeader& header) {
 
 template<typename T>
 size_t InMemHashIndex<T>::append(const IndexBuffer<BufferKeyType>& buffer) {
-    slot_id_t numRequiredEntries =
-        HashIndexUtils::getNumRequiredEntries(this->indexHeader.numEntries + buffer.size());
-    while (numRequiredEntries > pSlots->size() * getSlotCapacity<T>()) {
-        this->splitSlot(this->indexHeader);
-    }
+    reserve(this->indexHeader.numEntries + buffer.size());
     // Do both searches after splitting. Returning early if the key already exists isn't a
     // particular concern and doing both after splitting allows the slotID to be reused
     common::hash_t hashes[BUFFER_SIZE];
