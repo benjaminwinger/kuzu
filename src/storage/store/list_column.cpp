@@ -86,7 +86,7 @@ void ListColumn::scan(Transaction* transaction, ReadState& readState, offset_t s
     auto offsetToWriteListData = listOffsetInVector;
     auto numValues = endOffsetInGroup - startOffsetInGroup;
     numValues = std::min(numValues, listOffsetInfoInStorage.numTotal);
-    KU_ASSERT(numValues >= 0);
+    KU_ASSERT(endOffsetInGroup >= startOffsetInGroup);
     for (auto i = 0u; i < numValues; i++) {
         list_size_t size = listOffsetInfoInStorage.getListSize(i);
         resultVector->setValue(i + offsetInVector, list_entry_t{listOffsetInVector, size});
