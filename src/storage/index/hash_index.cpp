@@ -756,6 +756,9 @@ void PrimaryKeyIndex::writeHeaders() {
 void PrimaryKeyIndex::prepareCommit() {
     if (!hasRunPrepareCommit) {
         bool indexChanged = false;
+        // The index file and the overflow file are two different files and can be safely updated in
+        // parallel
+#pragma omp parallel for
         for (auto i = 0u; i < NUM_HASH_INDEXES; i++) {
             if (hashIndices[i]->prepareCommit()) {
                 indexChanged = true;
@@ -768,12 +771,6 @@ void PrimaryKeyIndex::prepareCommit() {
         if (overflowFile) {
             overflowFile->prepareCommit();
         }
-        // Make sure that changes which bypassed the WAL are written.
-        // There is no other mechanism for enforcing that they are flushed
-        // and they will be dropped when the file handle is destroyed.
-        // TODO: Should eventually be moved into the disk array when the disk array can
-        // generally handle bypassing the WAL, but should only be run once per file, not once per
-        // disk array
         bufferManager.flushAllDirtyPagesInFrames(*fileHandle);
         hasRunPrepareCommit = true;
     }

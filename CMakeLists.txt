@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.15)
 project(Kuzu VERSION 0.4.2.7 LANGUAGES CXX C)
 
 find_package(Threads REQUIRED)
+find_package(OpenMP REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
