@@ -1,7 +1,7 @@
 #pragma once
 
 // Helpers
-#if defined _WIN32 || defined __CYGWIN__
+#if defined _MSC_VER
 #define KUZU_HELPER_DLL_IMPORT __declspec(dllimport)
 #define KUZU_HELPER_DLL_EXPORT __declspec(dllexport)
 #define KUZU_HELPER_DLL_LOCAL

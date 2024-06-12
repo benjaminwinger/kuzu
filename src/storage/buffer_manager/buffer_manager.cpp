@@ -5,7 +5,7 @@
 #include "common/constants.h"
 #include "common/exception/buffer_manager.h"
 
-#if defined(_WIN32)
+#if defined(_MSVC_VER)
 #include <exception>
 
 #include <eh.h>
@@ -163,11 +163,11 @@ void handleAccessViolation(unsigned int exceptionCode, PEXCEPTION_POINTERS excep
 // Returns true if the function completes successfully
 inline bool try_func(const std::function<void(uint8_t*)>& func, uint8_t* frame,
     const std::vector<std::unique_ptr<VMRegion>>& vmRegions, common::PageSizeClass pageSizeClass) {
-#if defined(_WIN32)
+#if defined(_MSVC_VER)
     try {
 #endif
         func(frame);
-#if defined(_WIN32)
+#if defined(_MSVC_VER)
     } catch (AccessViolation& exc) {
         // If we encounter an acess violation within the VM region,
         // the page was decomitted by another thread
@@ -188,7 +188,7 @@ inline bool try_func(const std::function<void(uint8_t*)>& func, uint8_t* frame,
 void BufferManager::optimisticRead(BMFileHandle& fileHandle, page_idx_t pageIdx,
     const std::function<void(uint8_t*)>& func) {
     auto pageState = fileHandle.getPageState(pageIdx);
-#if defined(_WIN32)
+#if defined(_MSVC_VER)
     // Change the Structured Exception handling just for the scope of this function
     auto translator = ScopedTranslator(handleAccessViolation);
 #endif

@@ -4,6 +4,8 @@
 #ifdef _WIN32
 #include <time.h>
 
+#include <cstdint>
+
 #include <windows.h>
 
 time_t convertTmToTime(struct tm tm);
