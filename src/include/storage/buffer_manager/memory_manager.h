@@ -7,6 +7,7 @@
 
 #include "common/constants.h"
 #include "common/types/types.h"
+#include "storage/buffer_manager/bm_file_handle.h"
 #include <span>
 
 namespace kuzu {
@@ -22,16 +23,33 @@ namespace storage {
 
 class MemoryManager;
 class BMFileHandle;
+class FileHandle;
 class BufferManager;
+class ChunkedNodeGroup;
 
 class MemoryBuffer {
+    friend class MemoryManager;
+
 public:
     MemoryBuffer(MemoryManager* mm, common::page_idx_t blockIdx, uint8_t* buffer,
         uint64_t size = common::BufferPoolConstants::PAGE_256KB_SIZE);
     ~MemoryBuffer();
 
-public:
+    std::span<uint8_t> getBuffer() const {
+        KU_ASSERT(!evicted);
+        return buffer;
+    }
+
+    MemoryManager* getMemoryManager() const { return mm; }
+    void loadFromDisk();
+
+private:
+    void spillToDisk(uint32_t fileHandleIndex);
+
     std::span<uint8_t> buffer;
+    std::atomic<bool> evicted = false;
+    uint64_t filePosition = UINT64_MAX;
+    uint32_t fileIndex = UINT32_MAX;
     common::page_idx_t pageIdx;
     MemoryManager* mm;
 };
@@ -66,15 +84,23 @@ public:
 
     BufferManager* getBufferManager() const { return bm; }
 
+    void addUnusedChunk(ChunkedNodeGroup* nodeGroup);
+    void loadFromDisk(ChunkedNodeGroup* nodeGroup);
+
 private:
     void freeBlock(common::page_idx_t pageIdx, std::span<uint8_t> buffer);
 
 private:
     BMFileHandle* fh;
     BufferManager* bm;
+    common::VirtualFileSystem* vfs;
+    main::ClientContext* clientContext;
     common::page_offset_t pageSize;
     std::stack<common::page_idx_t> freePages;
     std::mutex allocatorLock;
+    std::mutex partitionerGroupsMtx;
+    std::stack<ChunkedNodeGroup*> fullPartitionerGroups;
+    std::vector<std::unique_ptr<FileHandle>> partitionerFileHandles;
 };
 
 } // namespace storage

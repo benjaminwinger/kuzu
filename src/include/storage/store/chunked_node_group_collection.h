@@ -40,6 +40,8 @@ public:
     inline uint64_t getNumChunkedGroups() const { return chunkedGroups.size(); }
     inline void clear() { chunkedGroups.clear(); }
 
+    void loadFromDisk();
+
 private:
     std::vector<common::LogicalType> types;
     std::vector<std::unique_ptr<ChunkedNodeGroup>> chunkedGroups;

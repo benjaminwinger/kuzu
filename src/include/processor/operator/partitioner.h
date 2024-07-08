@@ -58,7 +58,12 @@ struct PartitionerSharedState {
         common::idx_t partitioningIdx, common::partition_idx_t partitionIdx) const {
         KU_ASSERT(partitioningIdx < partitioningBuffers.size());
         KU_ASSERT(partitionIdx < partitioningBuffers[partitioningIdx]->partitions.size());
-        return partitioningBuffers[partitioningIdx]->partitions[partitionIdx];
+
+        auto& partitioningBuffer = partitioningBuffers[partitioningIdx]->partitions[partitionIdx];
+        // This may still run out of memory if there isn't enough space for one partitioningBuffer
+        // per thread
+        partitioningBuffer.loadFromDisk();
+        return partitioningBuffer;
     }
 };
 

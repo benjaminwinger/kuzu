@@ -27,6 +27,8 @@ void ChunkedNodeGroupCollection::append(const std::vector<ValueVector*>& vectors
         tmpSelVector.setToFiltered(numRowsToAppendInGroup);
         lastChunkedGroup->append(vectors, tmpSelVector, numRowsToAppendInGroup);
         if (lastChunkedGroup->getNumRows() == CHUNK_CAPACITY) {
+            // Register the last chunk as unused and free-able
+            mm.addUnusedChunk(chunkedGroups.back().get());
             chunkedGroups.push_back(std::make_unique<ChunkedNodeGroup>(mm, types,
                 false /*enableCompression*/, CHUNK_CAPACITY));
         }
@@ -46,6 +48,12 @@ void ChunkedNodeGroupCollection::merge(ChunkedNodeGroupCollection& other) {
     chunkedGroups.reserve(chunkedGroups.size() + other.chunkedGroups.size());
     for (auto& chunkedGroup : other.chunkedGroups) {
         merge(std::move(chunkedGroup));
+    }
+}
+
+void ChunkedNodeGroupCollection::loadFromDisk() {
+    for (auto& chunkedGroup : chunkedGroups) {
+        chunkedGroup->loadFromDisk();
     }
 }
 

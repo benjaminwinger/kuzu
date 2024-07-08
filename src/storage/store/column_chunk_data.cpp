@@ -8,9 +8,9 @@
 #include "common/types/internal_id_t.h"
 #include "common/types/types.h"
 #include "expression_evaluator/expression_evaluator.h"
-#include "storage/buffer_manager/bm_file_handle.h"
 #include "storage/buffer_manager/memory_manager.h"
 #include "storage/compression/compression.h"
+#include "storage/file_handle.h"
 #include "storage/store/list_chunk_data.h"
 #include "storage/store/string_chunk_data.h"
 #include "storage/store/struct_chunk_data.h"
@@ -21,7 +21,7 @@ using namespace kuzu::evaluator;
 namespace kuzu {
 namespace storage {
 
-ColumnChunkMetadata uncompressedFlushBuffer(std::span<uint8_t> buffer, BMFileHandle* dataFH,
+ColumnChunkMetadata uncompressedFlushBuffer(std::span<uint8_t> buffer, FileHandle* dataFH,
     page_idx_t startPageIdx, const ColumnChunkMetadata& metadata) {
     KU_ASSERT(dataFH->getNumPages() >= startPageIdx + metadata.numPages);
     dataFH->getFileInfo()->writeFile(buffer.data(), buffer.size(),
@@ -54,7 +54,7 @@ public:
 
     CompressedFlushBuffer(const CompressedFlushBuffer& other) = default;
 
-    ColumnChunkMetadata operator()(const std::span<uint8_t> buffer, BMFileHandle* dataFH,
+    ColumnChunkMetadata operator()(const std::span<uint8_t> buffer, FileHandle* dataFH,
         page_idx_t startPageIdx, const ColumnChunkMetadata& metadata) const {
         auto valuesRemaining = metadata.numValues;
         const uint8_t* bufferStart = buffer.data();
@@ -241,8 +241,8 @@ void ColumnChunkData::resetToEmpty() {
     if (nullChunk) {
         nullChunk->resetToEmpty();
     }
-    KU_ASSERT(buffer->buffer.size_bytes() == getBufferSize(capacity));
-    memset(getData<uint8_t>(), 0x00, buffer->buffer.size_bytes());
+    KU_ASSERT(getBufferSize() == getBufferSize(capacity));
+    memset(getData<uint8_t>(), 0x00, getBufferSize());
     numValues = 0;
 }
 ColumnChunkMetadata ColumnChunkData::getMetadataToFlush() const {
@@ -254,14 +254,14 @@ ColumnChunkMetadata ColumnChunkData::getMetadataToFlush() const {
             nullMask = nullChunk->getNullMask();
         }
 
-        auto [min, max] = getMinMaxStorageValue(buffer->buffer.data(), 0 /*offset*/, numValues,
-            dataType.getPhysicalType(), nullMask.has_value() ? &*nullMask : nullptr,
-            true /*valueRequiredIfUnsupported*/);
+        auto [min, max] =
+            getMinMaxStorageValue(getData(), 0 /*offset*/, numValues, dataType.getPhysicalType(),
+                nullMask.has_value() ? &*nullMask : nullptr, true /*valueRequiredIfUnsupported*/);
         minValue = min.value_or(StorageValue());
         maxValue = max.value_or(StorageValue());
     }
-    KU_ASSERT(buffer->buffer.size_bytes() == getBufferSize(capacity));
-    return getMetadataFunction(buffer->buffer, capacity, numValues, minValue, maxValue);
+    KU_ASSERT(getBufferSize() == getBufferSize(capacity));
+    return getMetadataFunction(buffer->getBuffer(), capacity, numValues, minValue, maxValue);
 }
 
 void ColumnChunkData::append(ValueVector* vector, const SelectionVector& selVector) {
@@ -283,11 +283,11 @@ void ColumnChunkData::append(ColumnChunkData* other, offset_t startPosInOtherChu
         numValuesToAppend * numBytesPerValue);
     numValues += numValuesToAppend;
 }
-ColumnChunkMetadata ColumnChunkData::flushBuffer(BMFileHandle* dataFH, page_idx_t startPageIdx,
+ColumnChunkMetadata ColumnChunkData::flushBuffer(FileHandle* dataFH, page_idx_t startPageIdx,
     const ColumnChunkMetadata& metadata) const {
     if (!metadata.compMeta.isConstant()) {
         KU_ASSERT(getBufferSize() == getBufferSize(capacity));
-        return flushBufferFunction(buffer->buffer, dataFH, startPageIdx, metadata);
+        return flushBufferFunction(buffer->getBuffer(), dataFH, startPageIdx, metadata);
     }
     return metadata;
 }
@@ -402,8 +402,8 @@ void ColumnChunkData::resize(uint64_t newCapacity) {
     }
     const auto numBytesAfterResize = getBufferSize(newCapacity);
     if (numBytesAfterResize > getBufferSize()) {
-        auto resizedBuffer = buffer->mm->mallocBuffer(true, numBytesAfterResize);
-        memcpy(resizedBuffer->buffer.data(), buffer->buffer.data(), getBufferSize());
+        auto resizedBuffer = buffer->getMemoryManager()->mallocBuffer(true, numBytesAfterResize);
+        memcpy(resizedBuffer->getBuffer().data(), buffer->getBuffer().data(), getBufferSize());
         buffer = std::move(resizedBuffer);
     }
     if (nullChunk) {
@@ -429,7 +429,7 @@ void ColumnChunkData::populateWithDefaultVal(ExpressionEvaluator& defaultEvaluat
 
 void ColumnChunkData::copyVectorToBuffer(ValueVector* vector, offset_t startPosInChunk,
     const SelectionVector& selVector) {
-    auto bufferToWrite = buffer->buffer.data() + startPosInChunk * numBytesPerValue;
+    auto bufferToWrite = buffer->getBuffer().data() + startPosInChunk * numBytesPerValue;
     KU_ASSERT(startPosInChunk + selVector.getSelSize() <= capacity);
     const auto vectorDataToWriteFrom = vector->getData();
     if (selVector.isUnfiltered()) {
@@ -653,7 +653,7 @@ public:
         }
         KU_ASSERT(commonTableID == relIDsInVector[offsetInVector].tableID);
         if (!vector->isNull(offsetInVector)) {
-            memcpy(buffer->buffer.data() + offsetInChunk * numBytesPerValue,
+            memcpy(buffer->getBuffer().data() + offsetInChunk * numBytesPerValue,
                 &relIDsInVector[offsetInVector].offset, numBytesPerValue);
         }
         if (offsetInChunk >= numValues) {
@@ -716,6 +716,10 @@ std::optional<common::NullMask> ColumnChunkData::getNullMask() const {
 
 bool ColumnChunkData::isNull(common::offset_t pos) const {
     return nullChunk ? nullChunk->isNull(pos) : false;
+}
+
+void ColumnChunkData::loadFromDisk() {
+    buffer->loadFromDisk();
 }
 
 } // namespace storage

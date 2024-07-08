@@ -18,7 +18,7 @@ class ExpressionEvaluator;
 namespace storage {
 
 class NullChunkData;
-class BMFileHandle;
+class FileHandle;
 
 struct ColumnChunkMetadata {
     common::page_idx_t pageIdx;
@@ -39,6 +39,8 @@ struct ColumnChunkMetadata {
 class ColumnChunkData {
 public:
     friend struct ColumnChunkFactory;
+    // For spilling to disk we need access to the underlying buffer
+    friend class MemoryManager;
 
     // ColumnChunks must be initialized after construction, so this constructor should only be used
     // through the ColumnChunkFactory
@@ -78,7 +80,7 @@ public:
     virtual void append(ColumnChunkData* other, common::offset_t startPosInOtherChunk,
         uint32_t numValuesToAppend);
 
-    ColumnChunkMetadata flushBuffer(BMFileHandle* dataFH, common::page_idx_t startPageIdx,
+    ColumnChunkMetadata flushBuffer(FileHandle* dataFH, common::page_idx_t startPageIdx,
         const ColumnChunkMetadata& metadata) const;
 
     static common::page_idx_t getNumPagesForBytes(uint64_t numBytes) {
@@ -87,12 +89,12 @@ public:
     }
 
     uint64_t getNumBytesPerValue() const { return numBytesPerValue; }
-    uint8_t* getData() const { return buffer->buffer.data(); }
+    uint8_t* getData() const { return buffer->getBuffer().data(); }
     template<typename T>
     T* getData() const {
-        return reinterpret_cast<T*>(buffer->buffer.data());
+        return reinterpret_cast<T*>(buffer->getBuffer().data());
     }
-    uint64_t getBufferSize() const { return buffer->buffer.size_bytes(); }
+    uint64_t getBufferSize() const { return buffer->getBuffer().size_bytes(); }
 
     virtual void lookup(common::offset_t offsetInChunk, common::ValueVector& output,
         common::sel_t posInOutputVector) const;
@@ -135,6 +137,8 @@ public:
         return common::ku_dynamic_cast<const ColumnChunkData&, const TARGET&>(*this);
     }
 
+    virtual void loadFromDisk();
+
 protected:
     // Initializes the data buffer and functions. They are (and should be) only called in
     // constructor.
@@ -149,7 +153,7 @@ private:
 
 protected:
     using flush_buffer_func_t = std::function<ColumnChunkMetadata(const std::span<uint8_t>,
-        BMFileHandle*, common::page_idx_t, const ColumnChunkMetadata&)>;
+        FileHandle*, common::page_idx_t, const ColumnChunkMetadata&)>;
     using get_metadata_func_t = std::function<ColumnChunkMetadata(const std::span<uint8_t>,
         uint64_t, uint64_t, StorageValue, StorageValue)>;
 
@@ -216,11 +220,11 @@ public:
         numValues = 0;
     }
     void resetToNoNull() {
-        memset(buffer->buffer.data(), 0 /* non null */, buffer->buffer.size_bytes());
+        memset(getData(), 0 /* non null */, getBufferSize());
         mayHaveNullValue = false;
     }
     void resetToAllNull() override {
-        memset(getData(), 0xFF /* null */, buffer->buffer.size_bytes());
+        memset(getData(), 0xFF /* null */, getBufferSize());
         mayHaveNullValue = true;
     }
 

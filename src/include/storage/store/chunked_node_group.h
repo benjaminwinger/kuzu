@@ -59,6 +59,12 @@ public:
         chunks[chunkIdx]->write(data[vectorIdx].get(), &offsetChunk, common::RelMultiplicity::ONE);
     }
 
+    void loadFromDisk() {
+        for (auto& chunk : chunks) {
+            chunk->loadFromDisk();
+        }
+    }
+
 protected:
     std::vector<std::unique_ptr<ColumnChunkData>> chunks;
 

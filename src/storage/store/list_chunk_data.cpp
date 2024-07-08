@@ -285,8 +285,8 @@ void ListChunkData::resetOffset() {
 
 void ListChunkData::finalize() {
     // rewrite the column chunk for better scanning performance
-    auto newColumnChunk = ColumnChunkFactory::createColumnChunkData(*buffer->mm, dataType.copy(),
-        enableCompression, capacity);
+    auto newColumnChunk = ColumnChunkFactory::createColumnChunkData(*buffer->getMemoryManager(),
+        dataType.copy(), enableCompression, capacity);
     uint64_t totalListLen = dataColumnChunk->getNumValues();
     uint64_t resizeThreshold = dataColumnChunk->getCapacity() / 2;
     // if the list is not very long, we do not need to rewrite
