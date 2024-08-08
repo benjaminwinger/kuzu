@@ -13,6 +13,9 @@
 #include <exception>
 
 #include <eh.h>
+#include <errhandlingapi.h>
+#include <handleapi.h>
+#include <memoryapi.h>
 #include <windows.h>
 #include <winnt.h>
 #endif
@@ -288,6 +291,16 @@ bool BufferManager::claimAFrame(BMFileHandle& fileHandle, page_idx_t pageIdx,
     if (!reserve(pageSizeToClaim)) {
         return false;
     }
+#ifdef _WIN32
+    // We need to commit memory explicitly on windows
+    auto result =
+        VirtualAlloc(getFrame(fileHandle, pageIdx), pageSizeToClaim, MEM_COMMIT, PAGE_READWRITE);
+    if (result == NULL) {
+        throw BufferManagerException(
+            stringFormat("VirtualAlloc MEM_COMMIT failed with error code {}: {}.", GetLastError(),
+                std::system_category().message(GetLastError())));
+    }
+#endif
     cachePageIntoFrame(fileHandle, pageIdx, pageReadPolicy);
     return true;
 }
@@ -374,6 +387,16 @@ void BufferManager::updateFrameIfPageIsInFrameWithoutLock(file_idx_t fileIdx,
     KU_ASSERT(fileIdx < fileHandles.size());
     auto& fileHandle = *fileHandles[fileIdx];
     if (fileHandle.getPageState(pageIdx)) {
+#ifdef _WIN32
+        // TODO(bmwinger): Not sure why this should be necessary here
+        auto result = VirtualAlloc(getFrame(fileHandle, pageIdx), pageSizeToClaim, MEM_COMMIT,
+            PAGE_READWRITE);
+        if (result == NULL) {
+            throw BufferManagerException(
+                stringFormat("VirtualAlloc MEM_COMMIT failed with error code {}: {}.",
+                    GetLastError(), std::system_category().message(GetLastError())));
+        }
+#endif
         memcpy(getFrame(fileHandle, pageIdx), newPage, BufferPoolConstants::PAGE_4KB_SIZE);
     }
 }
