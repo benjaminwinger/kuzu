@@ -27,7 +27,7 @@ bool NodeTableScanState::scanNext(Transaction* transaction) {
         return false;
     }
     const auto scanResult = nodeGroup->scan(transaction, *this);
-    if (scanResult == NODE_GROUP_SCAN_EMMPTY_RESULT) {
+    if (scanResult == NODE_GROUP_SCAN_EMPTY_RESULT) {
         return false;
     }
     auto nodeGroupStartOffset = StorageUtils::getStartOffsetOfNodeGroup(nodeGroupIdx);
@@ -339,7 +339,7 @@ void NodeTable::commit(Transaction* transaction, LocalTable* localTable) {
         scanState->nodeGroup->initializeScanState(transaction, *scanState);
         while (true) {
             auto scanResult = scanState->nodeGroup->scan(transaction, *scanState);
-            if (scanResult == NODE_GROUP_SCAN_EMMPTY_RESULT) {
+            if (scanResult == NODE_GROUP_SCAN_EMPTY_RESULT) {
                 break;
             }
             for (auto i = 0u; i < scanResult.numRows; i++) {

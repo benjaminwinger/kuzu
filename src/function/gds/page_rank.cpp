@@ -129,11 +129,17 @@ public:
                 for (auto offset = 0u; offset < graph->getNumNodes(tableID); ++offset) {
                     auto nodeID = nodeID_t{offset, tableID};
                     auto rank = 0.0;
-                    auto iter = graph->scanFwd(nodeID, *scanState);
+                    // TODO(bmwinger): this can be moved into the outer loop and passed multiple
+                    // nodes at once
+                    auto iter = graph->scanFwd(tableID, std::span(&nodeID.offset, 1), *scanState);
                     for (const auto chunk : iter) {
                         chunk.selVector.forEach([&](auto i) {
+                            // TODO(bmwinger): this can probably also take multiple nodes at once
                             auto numNbrOfNbr =
-                                graph->scanFwd(chunk.nbrNodes[i], *innerScanState).count();
+                                graph
+                                    ->scanFwd(tableID, std::span(&chunk.nbrNodes[i].offset, 1),
+                                        *innerScanState)
+                                    .count();
                             if (numNbrOfNbr == 0) {
                                 numNbrOfNbr = numNodesInGraph;
                             }

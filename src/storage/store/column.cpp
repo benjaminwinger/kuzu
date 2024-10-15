@@ -95,6 +95,7 @@ InternalIDColumn::InternalIDColumn(std::string name, FileHandle* dataFH, MemoryM
 
 void InternalIDColumn::populateCommonTableID(const ValueVector* resultVector) const {
     auto nodeIDs = reinterpret_cast<internalID_t*>(resultVector->getData());
+    // TODO: Try foreach
     auto& selVector = resultVector->state->getSelVector();
     for (auto i = 0u; i < selVector.getSelSize(); i++) {
         const auto pos = selVector[i];

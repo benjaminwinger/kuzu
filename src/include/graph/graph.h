@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -26,6 +27,7 @@ public:
         // this reference can be modified, but the underlying data will be reset the next time next
         // is called
         common::SelectionVector& selVector;
+        common::nodeID_t sourceNode;
     };
     virtual ~GraphScanState() = default;
     virtual Chunk getChunk() = 0;
@@ -46,7 +48,15 @@ class Graph {
 public:
     class Iterator {
     public:
-        explicit constexpr Iterator(GraphScanState* scanState) : scanState{scanState} {}
+        explicit constexpr Iterator(std::nullptr_t) : scanState{nullptr} {}
+        explicit constexpr Iterator(GraphScanState* scanState) : scanState{scanState} {
+            KU_ASSERT(scanState);
+            // FIXME(bmwinger): The iterator starts empty, but that means that every time we scan a
+            // node it starts off empty.
+            /*if (!scanState->next()) {
+                scanState = nullptr;
+            }*/
+        }
         DEFAULT_BOTH_MOVE(Iterator);
         Iterator(const Iterator& other) = default;
 
@@ -124,7 +134,8 @@ public:
     // group will be scanned at once.
 
     // Get dst nodeIDs for given src nodeID using forward adjList.
-    virtual Iterator scanFwd(common::nodeID_t nodeID, GraphScanState& state) = 0;
+    virtual Iterator scanFwd(common::table_id_t tableID, std::span<const common::offset_t> nodeIDs,
+        GraphScanState& state) = 0;
 
     // We don't use scanBwd currently. I'm adding them because they are the mirroring to scanFwd.
     // Also, algorithm may only need adjList index in single direction so we should make double
@@ -135,7 +146,8 @@ public:
         std::span<common::table_id_t> nodeTableIDs) = 0;
 
     // Get dst nodeIDs for given src nodeID tables using backward adjList.
-    virtual Iterator scanBwd(common::nodeID_t nodeID, GraphScanState& state) = 0;
+    virtual Iterator scanBwd(common::table_id_t tableID, std::span<const common::offset_t> nodeIDs,
+        GraphScanState& state) = 0;
 };
 
 } // namespace graph

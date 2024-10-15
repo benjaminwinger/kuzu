@@ -31,7 +31,7 @@ public:
         selectedPositions = const_cast<sel_t*>(INCREMENTAL_SELECTED_POS.data());
     }
     void setToUnfiltered(sel_t size) {
-        KU_ASSERT(size <= capacity);
+        KU_ASSERT(size <= INCREMENTAL_SELECTED_POS.size());
         selectedPositions = const_cast<sel_t*>(INCREMENTAL_SELECTED_POS.data());
         selectedSize = size;
     }

@@ -18,6 +18,7 @@ struct LocalRelTableScanState;
 struct RelTableScanState : TableScanState {
     common::RelDataDirection direction;
     common::sel_t currBoundNodeIdx;
+    common::sel_t outputBoundNodeIdx;
     Column* csrOffsetColumn;
     Column* csrLengthColumn;
 
@@ -30,8 +31,8 @@ struct RelTableScanState : TableScanState {
     RelTableScanState(common::table_id_t tableID, const std::vector<common::column_id_t>& columnIDs)
         : TableScanState{tableID, columnIDs, {}, {}},
           direction{common::RelDataDirection::FWD /* This is a dummy placeholder */},
-          currBoundNodeIdx{0}, csrOffsetColumn{nullptr}, csrLengthColumn{nullptr},
-          localTableScanState{nullptr} {
+          currBoundNodeIdx{0}, outputBoundNodeIdx{0}, csrOffsetColumn{nullptr},
+          csrLengthColumn{nullptr}, localTableScanState{nullptr} {
         nodeGroupScanState = std::make_unique<NodeGroupScanState>(columnIDs.size());
     }
 

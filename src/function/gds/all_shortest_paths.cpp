@@ -207,8 +207,10 @@ public:
         PathMultiplicities* multiplicities)
         : frontierPair{frontierPair}, multiplicities{multiplicities} {};
 
-    void edgeCompute(nodeID_t boundNodeID, std::span<const nodeID_t> nbrIDs,
-        std::span<const relID_t>, SelectionVector& mask, bool) override {
+    uint64_t edgeCompute(nodeID_t boundNodeID, std::span<const nodeID_t> nbrIDs,
+        std::span<const relID_t>, SelectionVector& mask, bool, GDSFrontier& frontier) override {
+        auto* frontierMask = frontier.getNextFrontierFixedMask();
+        auto curIter = frontier.getCurIter();
         size_t activeCount = 0;
         mask.forEach([&](auto i) {
             auto nbrVal =
@@ -226,10 +228,11 @@ public:
                     multiplicities->getBoundMultiplicity(boundNodeID.offset));
             }
             if (nbrVal == PathLengths::UNVISITED) {
-                mask.getMutableBuffer()[activeCount++] = i;
+                frontierMask[nbrIDs[i].offset].store(curIter);
+                activeCount++;
             }
         });
-        mask.setToFiltered(activeCount);
+        return activeCount;
     }
 
     std::unique_ptr<EdgeCompute> copy() override {
@@ -248,8 +251,11 @@ public:
         parentListBlock = bfsGraph->addNewBlock();
     }
 
-    void edgeCompute(nodeID_t boundNodeID, std::span<const nodeID_t> nbrNodeIDs,
-        std::span<const relID_t> edgeIDs, SelectionVector& mask, bool fwdEdge) override {
+    uint64_t edgeCompute(nodeID_t boundNodeID, std::span<const nodeID_t> nbrNodeIDs,
+        std::span<const relID_t> edgeIDs, SelectionVector& mask, bool fwdEdge,
+        GDSFrontier& frontier) override {
+        auto* frontierMask = frontier.getNextFrontierFixedMask();
+        auto curIter = frontier.getCurIter();
         size_t activeCount = 0;
         mask.forEach([&](auto i) {
             auto nbrLen = frontiersPair->pathLengths->getMaskValueFromNextFrontierFixedMask(
@@ -269,10 +275,11 @@ public:
                     edgeIDs[i], fwdEdge);
             }
             if (nbrLen == PathLengths::UNVISITED) {
-                mask.getMutableBuffer()[activeCount++] = i;
+                frontierMask[nbrNodeIDs[i].offset].store(curIter);
+                activeCount++;
             }
         });
-        mask.setToFiltered(activeCount);
+        return activeCount;
     }
 
     std::unique_ptr<EdgeCompute> copy() override {
@@ -398,8 +405,11 @@ struct VarLenJoinsEdgeCompute : public EdgeCompute {
         parentPtrsBlock = bfsGraph->addNewBlock();
     };
 
-    void edgeCompute(nodeID_t boundNodeID, std::span<const nodeID_t> nbrNodeIDs,
-        std::span<const relID_t> edgeIDs, SelectionVector& mask, bool isFwd) override {
+    uint64_t edgeCompute(nodeID_t boundNodeID, std::span<const nodeID_t> nbrNodeIDs,
+        std::span<const relID_t> edgeIDs, SelectionVector& mask, bool isFwd,
+        GDSFrontier& frontier) override {
+        auto* frontierMask = frontier.getNextFrontierFixedMask();
+        auto curIter = frontier.getCurIter();
         mask.forEach([&](auto i) {
             // We should always update the nbrID in variable length joins
             if (!parentPtrsBlock->hasSpace()) {
@@ -407,8 +417,9 @@ struct VarLenJoinsEdgeCompute : public EdgeCompute {
             }
             bfsGraph->addParent(frontierPair->getCurrentIter(), parentPtrsBlock,
                 nbrNodeIDs[i] /* child */, boundNodeID /* parent */, edgeIDs[i], isFwd);
-            // all nodes visited are active, so the mask is left unmodified
+            frontierMask[nbrNodeIDs[i].offset].store(curIter);
         });
+        return mask.getSelSize();
     }
 
     std::unique_ptr<EdgeCompute> copy() override {

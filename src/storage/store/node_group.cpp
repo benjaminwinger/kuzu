@@ -137,7 +137,7 @@ NodeGroupScanResult NodeGroup::scan(Transaction* transaction, TableScanState& st
         nodeGroupScanState.chunkedGroupIdx++;
     }
     if (nodeGroupScanState.chunkedGroupIdx >= chunkedGroups.getNumGroups(lock)) {
-        return NODE_GROUP_SCAN_EMMPTY_RESULT;
+        return NODE_GROUP_SCAN_EMPTY_RESULT;
     }
     const auto& chunkedGroupToScan =
         *chunkedGroups.getGroup(lock, nodeGroupScanState.chunkedGroupIdx);

@@ -52,17 +52,18 @@ TEST_F(RelScanTest, ScanFwd) {
 
     const auto compare = [&](uint64_t node, std::vector<nodeID_t> expected) {
         std::vector<nodeID_t> result;
-        for (const auto chunk : graph->scanFwd(nodeID_t{node, tableID}, *scanState)) {
+        auto nodeID = nodeID_t{node, tableID};
+        for (const auto chunk : graph->scanFwd(std::span(&nodeID, 1), *scanState)) {
             chunk.selVector.forEach([&](auto i) { result.push_back(chunk.nbrNodes[i]); });
         }
         EXPECT_EQ(result, expected);
-        EXPECT_EQ(graph->scanFwd(nodeID_t{node, tableID}, *scanState).collectNbrNodes(), expected);
+        EXPECT_EQ(graph->scanFwd(std::span(&nodeID, 1), *scanState).collectNbrNodes(), expected);
         result.clear();
-        for (const auto chunk : graph->scanBwd(nodeID_t{node, tableID}, *scanState)) {
+        for (const auto chunk : graph->scanBwd(std::span(&nodeID, 1), *scanState)) {
             chunk.selVector.forEach([&](auto i) { result.push_back(chunk.nbrNodes[i]); });
         }
         EXPECT_EQ(result, expected);
-        EXPECT_EQ(graph->scanFwd(nodeID_t{node, tableID}, *scanState).collectNbrNodes(), expected);
+        EXPECT_EQ(graph->scanFwd(std::span(&nodeID, 1), *scanState).collectNbrNodes(), expected);
     };
     compare(0, {nodeID_t{1, tableID}, nodeID_t{2, tableID}, nodeID_t{3, tableID}});
     compare(1, {nodeID_t{0, tableID}, nodeID_t{2, tableID}, nodeID_t{3, tableID}});

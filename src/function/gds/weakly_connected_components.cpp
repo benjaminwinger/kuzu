@@ -115,7 +115,10 @@ private:
         KU_ASSERT(!visitedMap.contains(nodeID));
         visitedMap.insert({nodeID, groupID});
         // Collect the nodes so that the recursive scan doesn't begin until this scan is done
-        for (auto& nbr : sharedState->graph->scanFwd(nodeID, scanState).collectNbrNodes()) {
+        // TODO(bmwinger): this whole function can probably take multiple nodes at once
+        for (auto& nbr :
+            sharedState->graph->scanFwd(nodeID.tableID, std::span(&nodeID.offset, 1), scanState)
+                .collectNbrNodes()) {
             if (!visitedMap.contains(nbr)) {
                 findConnectedComponent(nbr, groupID, scanState);
             }

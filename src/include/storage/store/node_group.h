@@ -80,7 +80,7 @@ struct NodeGroupScanResult {
     }
 };
 
-static auto NODE_GROUP_SCAN_EMMPTY_RESULT = NodeGroupScanResult{};
+static auto NODE_GROUP_SCAN_EMPTY_RESULT = NodeGroupScanResult{};
 
 struct TableScanState;
 class NodeGroup {

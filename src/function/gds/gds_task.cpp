@@ -1,6 +1,8 @@
 #include "function/gds/gds_task.h"
 
+#include "common/constants.h"
 #include "common/data_chunk/sel_vector.h"
+#include "common/types/types.h"
 #include "graph/graph.h"
 
 using namespace kuzu::common;
@@ -8,13 +10,12 @@ using namespace kuzu::common;
 namespace kuzu {
 namespace function {
 
-static uint64_t computeScanResult(nodeID_t sourceNodeID, std::span<const nodeID_t> nbrNodeIDs,
-    std::span<const relID_t> edgeIDs, SelectionVector& mask, EdgeCompute& ec,
+static uint64_t computeScanResult(std::span<const nodeID_t> nbrNodeIDs,
+    std::span<const relID_t> edgeIDs, SelectionVector& mask, nodeID_t sourceNodeID, EdgeCompute& ec,
     FrontierPair& frontierPair, bool isFwd) {
     KU_ASSERT(nbrNodeIDs.size() == edgeIDs.size());
-    ec.edgeCompute(sourceNodeID, nbrNodeIDs, edgeIDs, mask, isFwd);
-    frontierPair.getNextFrontierUnsafe().setActive(mask, nbrNodeIDs);
-    return mask.getSelSize();
+    return ec.edgeCompute(sourceNodeID, nbrNodeIDs, edgeIDs, mask, isFwd,
+        frontierPair.getNextFrontierUnsafe());
 }
 
 void FrontierTask::run() {
@@ -23,36 +24,47 @@ void FrontierTask::run() {
     auto graph = info.graph;
     auto scanState = graph->prepareScan(info.relTableIDToScan);
     auto localEc = info.edgeCompute.copy();
+    // TODO: Maybe write directly into the scanState? Probably won't make a huge difference
+    std::array<common::offset_t, DEFAULT_VECTOR_CAPACITY> activeNodes;
     while (sharedState->frontierPair.getNextRangeMorsel(frontierMorsel)) {
-        while (frontierMorsel.hasNextOffset()) {
-            common::nodeID_t nodeID = frontierMorsel.getNextNodeID();
-            if (sharedState->frontierPair.curFrontier->isActive(nodeID)) {
-                switch (info.direction) {
-                case ExtendDirection::FWD: {
-                    for (auto [nodes, edges, mask] : graph->scanFwd(nodeID, *scanState)) {
-                        numApproxActiveNodesForNextIter += computeScanResult(nodeID, nodes, edges,
-                            mask, *localEc, sharedState->frontierPair, true);
-                    }
-                } break;
-                case ExtendDirection::BWD: {
-                    for (auto [nodes, edges, mask] : graph->scanBwd(nodeID, *scanState)) {
-                        numApproxActiveNodesForNextIter += computeScanResult(nodeID, nodes, edges,
-                            mask, *localEc, sharedState->frontierPair, false);
-                    }
-                } break;
-                case ExtendDirection::BOTH: {
-                    for (auto [nodes, edges, mask] : graph->scanFwd(nodeID, *scanState)) {
-                        numApproxActiveNodesForNextIter += computeScanResult(nodeID, nodes, edges,
-                            mask, *localEc, sharedState->frontierPair, true);
-                    }
-                    for (auto [nodes, edges, mask] : graph->scanBwd(nodeID, *scanState)) {
-                        numApproxActiveNodesForNextIter += computeScanResult(nodeID, nodes, edges,
-                            mask, *localEc, sharedState->frontierPair, false);
-                    }
-                } break;
-                default:
-                    KU_UNREACHABLE;
+        // Will be updated by getNextActiveNodes
+        offset_t currentOffset = frontierMorsel.getBeginOffset();
+        while (currentOffset < frontierMorsel.getEndOffsetExclusive()) {
+            auto nodesToScan = sharedState->frontierPair.curFrontier->getNextActiveNodes(
+                activeNodes, currentOffset, frontierMorsel.getEndOffsetExclusive());
+            auto tableID = frontierMorsel.getTableID();
+            if (nodesToScan.size() == 0) {
+                break;
+            }
+            switch (info.direction) {
+            case ExtendDirection::FWD: {
+                for (auto [nodes, edges, mask, sourceNode] :
+                    graph->scanFwd(tableID, nodesToScan, *scanState)) {
+                    numApproxActiveNodesForNextIter += computeScanResult(nodes, edges, mask,
+                        sourceNode, *localEc, sharedState->frontierPair, true);
                 }
+            } break;
+            case ExtendDirection::BWD: {
+                for (auto [nodes, edges, mask, sourceNode] :
+                    graph->scanBwd(tableID, nodesToScan, *scanState)) {
+                    numApproxActiveNodesForNextIter += computeScanResult(nodes, edges, mask,
+                        sourceNode, *localEc, sharedState->frontierPair, false);
+                }
+            } break;
+            case ExtendDirection::BOTH: {
+                for (auto [nodes, edges, mask, sourceNode] :
+                    graph->scanFwd(tableID, nodesToScan, *scanState)) {
+                    numApproxActiveNodesForNextIter += computeScanResult(nodes, edges, mask,
+                        sourceNode, *localEc, sharedState->frontierPair, true);
+                }
+                for (auto [nodes, edges, mask, sourceNode] :
+                    graph->scanBwd(tableID, nodesToScan, *scanState)) {
+                    numApproxActiveNodesForNextIter += computeScanResult(nodes, edges, mask,
+                        sourceNode, *localEc, sharedState->frontierPair, false);
+                }
+            } break;
+            default:
+                KU_UNREACHABLE;
             }
         }
     }

@@ -4,6 +4,7 @@
 
 #include "binder/expression/property_expression.h"
 #include "common/assert.h"
+#include "common/data_chunk/data_chunk_state.h"
 #include "common/enums/rel_direction.h"
 #include "common/types/types.h"
 #include "common/vector/value_vector.h"
@@ -203,12 +204,20 @@ std::unique_ptr<GraphScanState> OnDiskGraph::prepareMultiTableScanBwd(
         new OnDiskGraphScanStates(context, std::span(tables), graphEntry));
 }
 
-Graph::Iterator OnDiskGraph::scanFwd(nodeID_t nodeID, GraphScanState& state) {
+Graph::Iterator OnDiskGraph::scanFwd(table_id_t tableID, std::span<const offset_t> nodeOffsets,
+    GraphScanState& state) {
     auto& onDiskScanState = ku_dynamic_cast<OnDiskGraphScanStates&>(state);
-    onDiskScanState.srcNodeIDVector->setValue<nodeID_t>(0, nodeID);
+    // TODO(bmwinger): maybe move this into a function since it's shared with scanBwd
+    KU_ASSERT(nodeIDs.size() <= DEFAULT_VECTOR_CAPACITY);
+    for (size_t i = 0; i < nodeOffsets.size(); i++) {
+        onDiskScanState.srcNodeIDVector->setValue(i, nodeID_t{nodeOffsets[i], tableID});
+    }
+    onDiskScanState.srcNodeIDVector->state->getSelVectorUnsafe().setToUnfiltered(
+        nodeOffsets.size());
     onDiskScanState.dstNodeIDVector->state->getSelVectorUnsafe().setSelSize(0);
-    KU_ASSERT(nodeTableIDToFwdRelTables.contains(nodeID.tableID));
-    auto& relTables = nodeTableIDToFwdRelTables.at(nodeID.tableID);
+
+    KU_ASSERT(nodeTableIDToFwdRelTables.contains(tableID));
+    auto& relTables = nodeTableIDToFwdRelTables.at(tableID);
     for (auto& [tableID, scanState] : onDiskScanState.scanStates) {
         auto relTablePair = relTables.find(tableID);
         if (relTablePair != relTables.end()) {
@@ -219,12 +228,19 @@ Graph::Iterator OnDiskGraph::scanFwd(nodeID_t nodeID, GraphScanState& state) {
     return Graph::Iterator(&onDiskScanState);
 }
 
-Graph::Iterator OnDiskGraph::scanBwd(nodeID_t nodeID, GraphScanState& state) {
+Graph::Iterator OnDiskGraph::scanBwd(table_id_t tableID, std::span<const offset_t> nodeOffsets,
+    GraphScanState& state) {
     auto& onDiskScanState = ku_dynamic_cast<OnDiskGraphScanStates&>(state);
-    onDiskScanState.srcNodeIDVector->setValue<nodeID_t>(0, nodeID);
+    KU_ASSERT(nodeIDs.size() <= DEFAULT_VECTOR_CAPACITY);
+    for (size_t i = 0; i < nodeOffsets.size(); i++) {
+        onDiskScanState.srcNodeIDVector->setValue(i, nodeID_t{nodeOffsets[i], tableID});
+    }
+    onDiskScanState.srcNodeIDVector->state->getSelVectorUnsafe().setToUnfiltered(
+        nodeOffsets.size());
     onDiskScanState.dstNodeIDVector->state->getSelVectorUnsafe().setSelSize(0);
-    KU_ASSERT(nodeTableIDToBwdRelTables.contains(nodeID.tableID));
-    auto& relTables = nodeTableIDToBwdRelTables.at(nodeID.tableID);
+
+    KU_ASSERT(nodeTableIDToBwdRelTables.contains(tableID));
+    auto& relTables = nodeTableIDToBwdRelTables.at(tableID);
     for (auto& [tableID, scanState] : onDiskScanState.scanStates) {
         auto relTablePair = relTables.find(tableID);
         if (relTablePair != relTables.end()) {

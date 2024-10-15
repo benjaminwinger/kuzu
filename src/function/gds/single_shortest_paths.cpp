@@ -1,3 +1,6 @@
+#include <cstdint>
+#include <iostream>
+
 #include "common/data_chunk/sel_vector.h"
 #include "function/gds/bfs_graph.h"
 #include "function/gds/gds_frontier.h"
@@ -62,16 +65,19 @@ public:
     explicit SingleSPLengthsEdgeCompute(SinglePathLengthsFrontierPair* frontierPair)
         : frontierPair{frontierPair} {};
 
-    void edgeCompute(common::nodeID_t, std::span<const common::nodeID_t> nbrIDs,
-        std::span<const relID_t>, SelectionVector& mask, bool) override {
-        size_t activeCount = 0;
+    uint64_t edgeCompute(common::nodeID_t, std::span<const common::nodeID_t> nbrIDs,
+        std::span<const relID_t>, SelectionVector& mask, bool, GDSFrontier& frontier) override {
+        auto* frontierMask = frontier.getNextFrontierFixedMask();
+        auto curIter = frontier.getCurIter();
+        uint64_t activeCount = 0;
         mask.forEach([&](auto i) {
             if (frontierPair->pathLengths->getMaskValueFromNextFrontierFixedMask(
                     nbrIDs[i].offset) == PathLengths::UNVISITED) {
-                mask.getMutableBuffer()[activeCount++] = i;
+                frontierMask[nbrIDs[i].offset].store(curIter);
+                activeCount++;
             }
         });
-        mask.setToFiltered(activeCount);
+        return activeCount;
     }
 
     std::unique_ptr<EdgeCompute> copy() override {
@@ -89,10 +95,15 @@ public:
         parentListBlock = bfsGraph->addNewBlock();
     }
 
-    void edgeCompute(nodeID_t boundNodeID, std::span<const nodeID_t> nbrNodeIDs,
-        std::span<const relID_t> edgeIDs, SelectionVector& mask, bool isFwd) override {
+    uint64_t edgeCompute(nodeID_t boundNodeID, std::span<const nodeID_t> nbrNodeIDs,
+        std::span<const relID_t> edgeIDs, SelectionVector& mask, bool isFwd,
+        GDSFrontier& frontier) override {
+        // edgeComputeCount++;
+        auto* frontierMask = frontier.getNextFrontierFixedMask();
+        auto curIter = frontier.getCurIter();
         size_t activeCount = 0;
         mask.forEach([&](auto i) {
+            // edgeComputeCountInner++;
             auto shouldUpdate = frontierPair->pathLengths->getMaskValueFromNextFrontierFixedMask(
                                     nbrNodeIDs[i].offset) == PathLengths::UNVISITED;
             if (shouldUpdate) {
@@ -102,10 +113,11 @@ public:
                 bfsGraph->tryAddSingleParent(frontierPair->curIter.load(std::memory_order_relaxed),
                     parentListBlock, nbrNodeIDs[i] /* child */, boundNodeID /* parent */,
                     edgeIDs[i], isFwd);
-                mask.getMutableBuffer()[activeCount++] = i;
+                frontierMask[nbrNodeIDs[i].offset].store(curIter);
+                activeCount++;
             }
         });
-        mask.setToFiltered(activeCount);
+        return activeCount;
     }
 
     std::unique_ptr<EdgeCompute> copy() override {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 
 #include "storage/buffer_manager/memory_manager.h"
 
@@ -28,6 +29,11 @@ public:
     bool hasSpace() const {
         return nextPosToWrite.load(std::memory_order_relaxed) <
                maxElements.load(std::memory_order_relaxed);
+    }
+
+    uint64_t getSpace() const {
+        return maxElements.load(std::memory_order_relaxed) -
+               nextPosToWrite.load(std::memory_order_relaxed);
     }
 
 private:

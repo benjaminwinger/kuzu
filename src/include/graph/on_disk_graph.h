@@ -30,16 +30,14 @@ struct OnDiskGraphScanState {
 
         std::span<const common::nodeID_t> getNbrNodes() const {
             RUNTIME_CHECK(for (size_t i = 0; i < getSelVector().getSelSize(); i++) {
-                KU_ASSERT(
-                    getSelVector().getSelectedPositions()[i] < common::DEFAULT_VECTOR_CAPACITY);
+                KU_ASSERT(getSelVector()[i] < common::DEFAULT_VECTOR_CAPACITY);
             });
             return std::span<const common::nodeID_t>(
                 &dstVector().getValue<const common::nodeID_t>(0), common::DEFAULT_VECTOR_CAPACITY);
         }
         std::span<const common::nodeID_t> getEdges() const {
             RUNTIME_CHECK(for (size_t i = 0; i < getSelVector().getSelSize(); i++) {
-                KU_ASSERT(
-                    getSelVector().getSelectedPositions()[i] < common::DEFAULT_VECTOR_CAPACITY);
+                KU_ASSERT(getSelVector()[i] < common::DEFAULT_VECTOR_CAPACITY);
             });
             return std::span<const common::nodeID_t>(
                 &relIDVector().getValue<const common::nodeID_t>(0),
@@ -52,6 +50,11 @@ struct OnDiskGraphScanState {
 
         const common::SelectionVector& getSelVector() const {
             return tableScanState->outState->getSelVector();
+        }
+        const common::nodeID_t& getSourceNode() const {
+            KU_ASSERT(tableScanState->outputBoundNodeIdx < common::DEFAULT_VECTOR_CAPACITY);
+            return tableScanState->nodeIDVector->getValue<common::nodeID_t>(
+                tableScanState->cachedBoundNodeSelVector[tableScanState->outputBoundNodeIdx]);
         }
 
         bool next(evaluator::ExpressionEvaluator* predicate);
@@ -80,9 +83,12 @@ class OnDiskGraphScanStates : public GraphScanState {
     friend class OnDiskGraph;
 
 public:
+    ~OnDiskGraphScanStates() override = default;
+
     GraphScanState::Chunk getChunk() override {
         auto& iter = getInnerIterator();
-        return Chunk{iter.getNbrNodes(), iter.getEdges(), iter.getSelVectorUnsafe()};
+        return Chunk{iter.getNbrNodes(), iter.getEdges(), iter.getSelVectorUnsafe(),
+            iter.getSourceNode()};
     }
     bool next() override;
 
@@ -140,8 +146,10 @@ public:
     std::unique_ptr<GraphScanState> prepareMultiTableScanBwd(
         std::span<common::table_id_t> nodeTableIDs) override;
 
-    Graph::Iterator scanFwd(common::nodeID_t nodeID, GraphScanState& state) override;
-    Graph::Iterator scanBwd(common::nodeID_t nodeID, GraphScanState& state) override;
+    Graph::Iterator scanFwd(common::table_id_t tableID, std::span<const common::offset_t> nodeIDs,
+        GraphScanState& state) override;
+    Graph::Iterator scanBwd(common::table_id_t tableID, std::span<const common::offset_t> nodeIDs,
+        GraphScanState& state) override;
 
 private:
     main::ClientContext* context;

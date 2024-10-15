@@ -10,6 +10,7 @@
 namespace kuzu {
 namespace function {
 
+class GDSFrontier;
 /**
  * Base interface for algorithms that can be implemented in Pregel-like vertex-centric manner or
  * more specifically Ligra's edgeCompute (called edgeUpdate in Ligra paper) function. Intended to be
@@ -24,9 +25,9 @@ public:
     // Updates the mask to indicate the neighbors which should be put in the next frontier.
     // So if the implementing class has access to the next frontier as a field,
     // **do not** call setActive. Helper functions in GDSUtils will do that work.
-    virtual void edgeCompute(common::nodeID_t boundNodeID,
+    virtual uint64_t edgeCompute(common::nodeID_t boundNodeID,
         std::span<const common::nodeID_t> nbrNodeID, std::span<const common::relID_t> edgeID,
-        common::SelectionVector& mask, bool fwdEdge) = 0;
+        common::SelectionVector& mask, bool fwdEdge, GDSFrontier& frontier) = 0;
 
     virtual std::unique_ptr<EdgeCompute> copy() = 0;
 };
@@ -66,6 +67,10 @@ public:
     bool hasNextOffset() const { return nextOffset < endOffsetExclusive; }
 
     common::nodeID_t getNextNodeID() { return {nextOffset++, tableID}; }
+
+    common::table_id_t getTableID() const { return tableID; }
+    common::table_id_t getBeginOffset() const { return beginOffset; }
+    common::table_id_t getEndOffsetExclusive() const { return endOffsetExclusive; }
 
 protected:
     void initMorsel(common::table_id_t _tableID, common::offset_t _beginOffset,
@@ -118,7 +123,11 @@ public:
     virtual bool isActive(common::nodeID_t nodeID) = 0;
     virtual void setActive(const common::SelectionVector& mask,
         std::span<const common::nodeID_t> nodeIDs) = 0;
+    virtual std::span<common::offset_t> getNextActiveNodes(std::span<common::offset_t> activeNodes,
+        common::offset_t& startOffset, common::offset_t endOffset) = 0;
     virtual void setActive(common::nodeID_t nodeID) = 0;
+    virtual std::atomic<uint16_t>* getNextFrontierFixedMask() = 0;
+    virtual uint16_t getCurIter() = 0;
     template<class TARGET>
     TARGET* ptrCast() {
         return common::ku_dynamic_cast<TARGET*>(this);
@@ -175,6 +184,19 @@ public:
                 std::memory_order_relaxed);
         });
     }
+    std::span<common::offset_t> getNextActiveNodes(std::span<common::offset_t> activeNodes,
+        common::offset_t& startOffset, common::offset_t endOffset) override {
+        auto frontierMask = getNextFrontierFixedMask();
+        uint64_t count = 0;
+        while (count < activeNodes.size() && startOffset < endOffset) {
+            if (frontierMask[startOffset].load(std::memory_order_relaxed) ==
+                curIter.load(std::memory_order_relaxed) - 1) {
+                activeNodes[count++] = startOffset;
+            }
+            startOffset++;
+        }
+        return std::span(activeNodes.data(), count);
+    }
 
     void setActive(common::nodeID_t nodeID) override {
         getNextFrontierFixedMask()[nodeID.offset].store(curIter.load(std::memory_order_relaxed),
@@ -192,17 +214,17 @@ public:
         return maxNodesInCurFrontierFixedMask.load(std::memory_order_relaxed);
     }
 
-    uint16_t getCurIter() { return curIter.load(std::memory_order_relaxed); }
+    uint16_t getCurIter() override { return curIter.load(std::memory_order_relaxed); }
 
-private:
-    std::atomic<uint16_t>* getCurFrontierFixedMask() {
-        auto retVal = curFrontierFixedMask.load(std::memory_order_relaxed);
+    std::atomic<uint16_t>* getNextFrontierFixedMask() override {
+        auto retVal = nextFrontierFixedMask.load(std::memory_order_relaxed);
         KU_ASSERT(retVal != nullptr);
         return retVal;
     }
 
-    std::atomic<uint16_t>* getNextFrontierFixedMask() {
-        auto retVal = nextFrontierFixedMask.load(std::memory_order_relaxed);
+private:
+    std::atomic<uint16_t>* getCurFrontierFixedMask() {
+        auto retVal = curFrontierFixedMask.load(std::memory_order_relaxed);
         KU_ASSERT(retVal != nullptr);
         return retVal;
     }

@@ -136,7 +136,7 @@ std::pair<CSRNodeGroupScanSource, row_idx_t> RelTableData::findMatchingRow(Trans
     auto source = CSRNodeGroupScanSource::NONE;
     while (true) {
         const auto scanResult = scanState->nodeGroup->scan(transaction, *scanState);
-        if (scanResult == NODE_GROUP_SCAN_EMMPTY_RESULT) {
+        if (scanResult == NODE_GROUP_SCAN_EMPTY_RESULT) {
             break;
         }
         for (auto i = 0u; i < scanState->outState->getSelVector().getSelSize(); i++) {
@@ -178,7 +178,7 @@ void RelTableData::checkIfNodeHasRels(Transaction* transaction,
     scanState->initState(transaction, getNodeGroup(nodeGroupIdx));
     while (true) {
         const auto scanResult = scanState->nodeGroup->scan(transaction, *scanState);
-        if (scanResult == NODE_GROUP_SCAN_EMMPTY_RESULT) {
+        if (scanResult == NODE_GROUP_SCAN_EMPTY_RESULT) {
             break;
         }
         if (scanState->outState->getSelVector().getSelSize() > 0) {

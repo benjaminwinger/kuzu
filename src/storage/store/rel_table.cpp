@@ -23,8 +23,8 @@ RelTableScanState::RelTableScanState(MemoryManager& mm, table_id_t tableID,
     Column* csrOffsetCol, Column* csrLengthCol, RelDataDirection direction,
     std::vector<ColumnPredicateSet> columnPredicateSets)
     : TableScanState{tableID, columnIDs, columns, std::move(columnPredicateSets)},
-      direction{direction}, currBoundNodeIdx{0}, csrOffsetColumn{csrOffsetCol},
-      csrLengthColumn{csrLengthCol}, localTableScanState{nullptr} {
+      direction{direction}, currBoundNodeIdx{0}, outputBoundNodeIdx{0},
+      csrOffsetColumn{csrOffsetCol}, csrLengthColumn{csrLengthCol}, localTableScanState{nullptr} {
     nodeGroupScanState = std::make_unique<CSRNodeGroupScanState>(mm, this->columnIDs.size());
     if (!this->columnPredicateSets.empty()) {
         // Since we insert a nbr column. We need to pad an empty nbr column predicate set.
@@ -78,7 +78,7 @@ bool RelTableScanState::scanNext(Transaction* transaction) {
         switch (source) {
         case TableScanSource::COMMITTED: {
             const auto scanResult = nodeGroup->scan(transaction, *this);
-            if (scanResult == NODE_GROUP_SCAN_EMMPTY_RESULT) {
+            if (scanResult == NODE_GROUP_SCAN_EMPTY_RESULT) {
                 if (hasUnComittedData()) {
                     initStateForUncommitted();
                 } else {
