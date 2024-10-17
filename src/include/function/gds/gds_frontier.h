@@ -3,8 +3,8 @@
 #include <atomic>
 #include <mutex>
 
-#include "common/data_chunk/sel_vector.h"
 #include "common/types/types.h"
+#include "graph/graph.h"
 #include "storage/buffer_manager/memory_manager.h"
 
 namespace kuzu {
@@ -24,9 +24,8 @@ public:
     // Updates the mask to indicate the neighbors which should be put in the next frontier.
     // So if the implementing class has access to the next frontier as a field,
     // **do not** call setActive. Helper functions in GDSUtils will do that work.
-    virtual void edgeCompute(common::nodeID_t boundNodeID,
-        std::span<const common::nodeID_t> nbrNodeID, std::span<const common::relID_t> edgeID,
-        common::SelectionVector& mask, bool fwdEdge) = 0;
+    virtual void edgeCompute(common::nodeID_t boundNodeID, graph::GraphScanState::Chunk& results,
+        bool fwdEdge) = 0;
 
     virtual std::unique_ptr<EdgeCompute> copy() = 0;
 };
@@ -116,8 +115,7 @@ class GDSFrontier {
 public:
     virtual ~GDSFrontier() = default;
     virtual bool isActive(common::nodeID_t nodeID) = 0;
-    virtual void setActive(const common::SelectionVector& mask,
-        std::span<const common::nodeID_t> nodeIDs) = 0;
+    virtual void setActive(const graph::GraphScanState::Chunk& chunk) = 0;
     virtual void setActive(common::nodeID_t nodeID) = 0;
     template<class TARGET>
     TARGET* ptrCast() {
@@ -167,11 +165,10 @@ public:
                curIter.load(std::memory_order_relaxed) - 1;
     }
 
-    void setActive(const common::SelectionVector& mask,
-        std::span<const common::nodeID_t> nodeIDs) override {
+    void setActive(const graph::GraphScanState::Chunk& chunk) override {
         auto frontierMask = getNextFrontierFixedMask();
-        mask.forEach([&](auto i) {
-            frontierMask[nodeIDs[i].offset].store(curIter.load(std::memory_order_relaxed),
+        chunk.forEach([&](auto nodeID, auto /*edgeID*/) {
+            frontierMask[nodeID.offset].store(curIter.load(std::memory_order_relaxed),
                 std::memory_order_relaxed);
         });
     }
