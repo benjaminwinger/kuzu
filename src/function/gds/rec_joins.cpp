@@ -6,6 +6,7 @@
 #include "function/gds/gds.h"
 #include "function/gds/gds_frontier.h"
 #include "function/gds/gds_utils.h"
+#include "graph/graph.h"
 #include "processor/execution_context.h"
 #include "processor/result/factorized_table.h"
 #include "storage/buffer_manager/memory_manager.h"
@@ -143,11 +144,13 @@ public:
         writer->beginWritingForDstNodesInTable(tableID);
     }
 
-    void vertexCompute(nodeID_t nodeID) override {
-        if (writer->skip(nodeID)) {
-            return;
+    void vertexCompute(const graph::VertexScanState::Chunk& chunk) override {
+        for (auto nodeID : chunk.getNodeIDs()) {
+            if (writer->skip(nodeID)) {
+                continue;
+            }
+            writer->write(*localFT, nodeID);
         }
-        writer->write(*localFT, nodeID);
     }
 
     void finalizeWorkerThread() override {

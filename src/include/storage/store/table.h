@@ -61,13 +61,6 @@ struct TableScanState {
 
     void resetOutVectors();
 
-    virtual void resetState() {
-        source = TableScanSource::NONE;
-        nodeGroupIdx = common::INVALID_NODE_GROUP_IDX;
-        nodeGroup = nullptr;
-        nodeGroupScanState->resetState();
-    }
-
     template<class TARGET>
     TARGET& cast() {
         return common::ku_dynamic_cast<TARGET&>(*this);

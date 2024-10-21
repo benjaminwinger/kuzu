@@ -40,6 +40,9 @@ struct NodeTableScanState final : TableScanState {
     }
 
     bool scanNext(transaction::Transaction* transaction) override;
+
+    bool scanNext(transaction::Transaction* transaction, common::offset_t startOffset,
+        common::offset_t numNodes);
 };
 
 struct NodeTableInsertState final : TableInsertState {
@@ -100,6 +103,8 @@ public:
 
     void initScanState(transaction::Transaction* transaction,
         TableScanState& scanState) const override;
+    void initScanState(transaction::Transaction* transaction, TableScanState& scanState,
+        common::table_id_t tableID, common::offset_t startOffset) const;
 
     bool scanInternal(transaction::Transaction* transaction, TableScanState& scanState) override;
     bool lookup(transaction::Transaction* transaction, const TableScanState& scanState) const;
