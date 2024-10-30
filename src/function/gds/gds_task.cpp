@@ -9,8 +9,8 @@ namespace function {
 
 static uint64_t computeScanResult(nodeID_t sourceNodeID, graph::GraphScanState::Chunk& chunk,
     EdgeCompute& ec, FrontierPair& frontierPair, bool isFwd) {
-    ec.edgeCompute(sourceNodeID, chunk, isFwd);
-    frontierPair.getNextFrontierUnsafe().setActive(chunk);
+    auto activeNodes = ec.edgeCompute(sourceNodeID, chunk, isFwd);
+    frontierPair.getNextFrontierUnsafe().setActive(activeNodes);
     return chunk.size();
 }
 

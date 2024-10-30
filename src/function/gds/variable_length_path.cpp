@@ -1,4 +1,7 @@
+#include <vector>
+
 #include "binder/expression/expression_util.h"
+#include "common/types/types.h"
 #include "function/gds/gds_function_collection.h"
 #include "function/gds/rec_joins.h"
 #include "graph/graph.h"
@@ -48,8 +51,9 @@ struct VarLenJoinsEdgeCompute : public EdgeCompute {
         parentPtrsBlock = bfsGraph->addNewBlock();
     };
 
-    void edgeCompute(nodeID_t boundNodeID, graph::GraphScanState::Chunk& chunk,
+    std::vector<nodeID_t> edgeCompute(nodeID_t boundNodeID, graph::GraphScanState::Chunk& chunk,
         bool isFwd) override {
+        std::vector<nodeID_t> activeNodes;
         chunk.forEach([&](auto nbrNode, auto edgeID) {
             // We should always update the nbrID in variable length joins
             if (!parentPtrsBlock->hasSpace()) {
@@ -57,8 +61,10 @@ struct VarLenJoinsEdgeCompute : public EdgeCompute {
             }
             bfsGraph->addParent(frontierPair->getCurrentIter(), parentPtrsBlock,
                 nbrNode /* child */, boundNodeID /* parent */, edgeID, isFwd);
-            // all nodes visited are active, so the mask is left unmodified
+
+            activeNodes.push_back(nbrNode);
         });
+        return activeNodes;
     }
 
     std::unique_ptr<EdgeCompute> copy() override {

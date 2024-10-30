@@ -1,3 +1,4 @@
+#include "common/types/types.h"
 #include "function/gds/bfs_graph.h"
 #include "function/gds/gds_frontier.h"
 #include "function/gds/gds_function_collection.h"
@@ -145,8 +146,10 @@ public:
         PathMultiplicities* multiplicities)
         : frontierPair{frontierPair}, multiplicities{multiplicities} {};
 
-    void edgeCompute(nodeID_t boundNodeID, GraphScanState::Chunk& resultChunk, bool) override {
-        resultChunk.filter([&](auto nbrNodeID, auto /*edgeID*/) {
+    std::vector<nodeID_t> edgeCompute(nodeID_t boundNodeID, GraphScanState::Chunk& resultChunk,
+        bool) override {
+        std::vector<nodeID_t> activeNodes;
+        resultChunk.forEach([&](auto nbrNodeID, auto /*edgeID*/) {
             auto nbrVal =
                 frontierPair->pathLengths->getMaskValueFromNextFrontierFixedMask(nbrNodeID.offset);
             // We should update the nbrID's multiplicity in 2 cases: 1) if nbrID is being visited
@@ -161,8 +164,11 @@ public:
                 multiplicities->incrementTargetMultiplicity(nbrNodeID.offset,
                     multiplicities->getBoundMultiplicity(boundNodeID.offset));
             }
-            return nbrVal == PathLengths::UNVISITED;
+            if (nbrVal == PathLengths::UNVISITED) {
+                activeNodes.push_back(nbrNodeID);
+            }
         });
+        return activeNodes;
     }
 
     std::unique_ptr<EdgeCompute> copy() override {
@@ -181,9 +187,10 @@ public:
         parentListBlock = bfsGraph->addNewBlock();
     }
 
-    void edgeCompute(nodeID_t boundNodeID, GraphScanState::Chunk& resultChunk,
+    std::vector<nodeID_t> edgeCompute(nodeID_t boundNodeID, GraphScanState::Chunk& resultChunk,
         bool fwdEdge) override {
-        resultChunk.filter([&](auto nbrNodeID, auto edgeID) {
+        std::vector<nodeID_t> activeNodes;
+        resultChunk.forEach([&](auto nbrNodeID, auto edgeID) {
             auto nbrLen =
                 frontiersPair->pathLengths->getMaskValueFromNextFrontierFixedMask(nbrNodeID.offset);
             // We should update the nbrID's multiplicity in 2 cases: 1) if nbrID is being visited
@@ -200,8 +207,11 @@ public:
                     parentListBlock, nbrNodeID /* child */, boundNodeID /* parent */, edgeID,
                     fwdEdge);
             }
-            return nbrLen == PathLengths::UNVISITED;
+            if (nbrLen == PathLengths::UNVISITED) {
+                activeNodes.push_back(nbrNodeID);
+            }
         });
+        return activeNodes;
     }
 
     std::unique_ptr<EdgeCompute> copy() override {

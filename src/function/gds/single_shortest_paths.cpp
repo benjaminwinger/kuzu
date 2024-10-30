@@ -1,3 +1,4 @@
+#include "common/types/types.h"
 #include "function/gds/bfs_graph.h"
 #include "function/gds/gds_frontier.h"
 #include "function/gds/gds_function_collection.h"
@@ -34,11 +35,16 @@ public:
     explicit SingleSPDestinationsEdgeCompute(SinglePathLengthsFrontierPair* frontierPair)
         : frontierPair{frontierPair} {};
 
-    void edgeCompute(common::nodeID_t, GraphScanState::Chunk& resultChunk, bool) override {
-        resultChunk.filter([&](auto nbrNode, auto) {
-            return frontierPair->pathLengths->getMaskValueFromNextFrontierFixedMask(
-                       nbrNode.offset) == PathLengths::UNVISITED;
+    std::vector<nodeID_t> edgeCompute(common::nodeID_t, GraphScanState::Chunk& resultChunk,
+        bool) override {
+        std::vector<nodeID_t> activeNodes;
+        resultChunk.forEach([&](auto nbrNode, auto) {
+            if (frontierPair->pathLengths->getMaskValueFromNextFrontierFixedMask(nbrNode.offset) ==
+                PathLengths::UNVISITED) {
+                activeNodes.push_back(nbrNode);
+            }
         });
+        return activeNodes;
     }
 
     std::unique_ptr<EdgeCompute> copy() override {
@@ -56,9 +62,10 @@ public:
         parentListBlock = bfsGraph->addNewBlock();
     }
 
-    void edgeCompute(nodeID_t boundNodeID, GraphScanState::Chunk& resultChunk,
+    std::vector<nodeID_t> edgeCompute(nodeID_t boundNodeID, GraphScanState::Chunk& resultChunk,
         bool isFwd) override {
-        resultChunk.filter([&](auto nbrNodeID, auto edgeID) {
+        std::vector<nodeID_t> activeNodes;
+        resultChunk.forEach([&](auto nbrNodeID, auto edgeID) {
             auto shouldUpdate = frontierPair->pathLengths->getMaskValueFromNextFrontierFixedMask(
                                     nbrNodeID.offset) == PathLengths::UNVISITED;
             if (shouldUpdate) {
@@ -68,10 +75,10 @@ public:
                 bfsGraph->tryAddSingleParent(frontierPair->curIter.load(std::memory_order_relaxed),
                     parentListBlock, nbrNodeID /* child */, boundNodeID /* parent */, edgeID,
                     isFwd);
-                return true;
+                activeNodes.push_back(nbrNodeID);
             }
-            return false;
         });
+        return activeNodes;
     }
 
     std::unique_ptr<EdgeCompute> copy() override {

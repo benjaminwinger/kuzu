@@ -32,46 +32,22 @@ public:
     struct Chunk {
         friend class GraphScanState;
 
-        template<class Func>
-        void forEach(Func&& func) const {
-            selVector.forEach([&](auto i) { func(nbrNodes[i], edges[i]); });
-        }
-
-        template<class PropertyType, class Func>
-        void forEach(Func&& func) const {
-            KU_ASSERT(propertyVector);
-            selVector.forEach([&](auto i) {
-                func(nbrNodes[i], edges[i], propertyVector->getValue<PropertyType>(i));
-            });
-        }
-
         // Any neighbour for which the given function returns false
         // will be omitted from future iterations
         // Used in GDSTask/EdgeCompute for updating the frontier
         template<class Func>
-        void filter(Func&& func) {
-            size_t activeCount = 0;
-            selVector.forEach([&](auto i) {
-                if (func(nbrNodes[i], edges[i])) {
-                    selVector.getMutableBuffer()[activeCount++] = i;
-                }
-            });
-            selVector.setToFiltered(activeCount);
+        void forEach(Func&& func) const {
+            selVector.forEach([&](auto i) { func(nbrNodes[i], edges[i]); });
         }
 
         // Any neighbour for which the given function returns false
         // will be omitted from future iterations
         // Used in GDSTask/EdgeCompute for updating the frontier
         template<class T, class Func>
-        void filter(Func&& func) {
+        void forEach(Func&& func) const {
             KU_ASSERT(propertyVector);
-            size_t activeCount = 0;
-            selVector.forEach([&](auto i) {
-                if (func(nbrNodes[i], edges[i], propertyVector->getValue<T>(i))) {
-                    selVector.getMutableBuffer()[activeCount++] = i;
-                }
-            });
-            selVector.setToFiltered(activeCount);
+            selVector.forEach(
+                [&](auto i) { func(nbrNodes[i], edges[i], propertyVector->getValue<T>(i)); });
         }
 
         uint64_t size() const { return selVector.getSelSize(); }
@@ -81,8 +57,8 @@ public:
             common::SelectionVector& selVector, const common::ValueVector* propertyVector)
             : nbrNodes{nbrNodes}, edges{edges}, selVector{selVector},
               propertyVector{propertyVector} {
-            KU_ASSERT(nbrNodes.size() == common::DEFAULT_VECTOR_CAPACITY);
-            KU_ASSERT(edges.size() == common::DEFAULT_VECTOR_CAPACITY);
+            KU_ASSERT(nbrNodes.size() == CAPACITY);
+            KU_ASSERT(edges.size() == CAPACITY);
         }
 
     private:
