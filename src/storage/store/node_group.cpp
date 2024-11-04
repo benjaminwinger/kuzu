@@ -1,5 +1,7 @@
 #include "storage/store/node_group.h"
 
+#include <iostream>
+
 #include "common/assert.h"
 #include "common/constants.h"
 #include "common/types/types.h"
@@ -139,68 +141,27 @@ void NodeGroup::initializeScanState(Transaction*, const UniqLock& lock,
 }
 
 NodeGroupScanResult NodeGroup::scan(Transaction* transaction, TableScanState& state) const {
-    // TODO(Guodong): Move the locked part of figuring out the chunked group to initScan.
-    const auto lock = chunkedGroups.lock();
     auto& nodeGroupScanState = *state.nodeGroupScanState;
-    KU_ASSERT(nodeGroupScanState.chunkedGroupIdx < chunkedGroups.getNumGroups(lock));
-    const auto chunkedGroup = chunkedGroups.getGroup(lock, nodeGroupScanState.chunkedGroupIdx);
-    if (nodeGroupScanState.nextRowToScan >=
-        chunkedGroup->getNumRows() + chunkedGroup->getStartRowIdx()) {
-        nodeGroupScanState.chunkedGroupIdx++;
-        if (nodeGroupScanState.chunkedGroupIdx >= chunkedGroups.getNumGroups(lock)) {
-            return NODE_GROUP_SCAN_EMMPTY_RESULT;
-        }
-        ChunkedNodeGroup* currentChunkedGroup =
-            chunkedGroups.getGroup(lock, nodeGroupScanState.chunkedGroupIdx);
-        initializeScanStateForChunkedGroup(state, currentChunkedGroup);
-    }
-    const auto& chunkedGroupToScan =
-        *chunkedGroups.getGroup(lock, nodeGroupScanState.chunkedGroupIdx);
-    const auto rowIdxInChunkToScan =
-        nodeGroupScanState.nextRowToScan - chunkedGroupToScan.getStartRowIdx();
-    const auto numRowsToScan =
-        std::min(chunkedGroupToScan.getNumRows() - rowIdxInChunkToScan, DEFAULT_VECTOR_CAPACITY);
-    bool enableSemiMask =
-        state.source == TableScanSource::COMMITTED && state.semiMask && state.semiMask->isEnabled();
-    if (enableSemiMask) {
-        const auto startNodeOffset = nodeGroupScanState.nextRowToScan +
-                                     StorageUtils::getStartOffsetOfNodeGroup(state.nodeGroupIdx);
-        const auto endNodeOffset = startNodeOffset + numRowsToScan;
-        const auto& arr = state.semiMask->range(startNodeOffset, endNodeOffset);
-        if (arr.empty()) {
-            state.outState->getSelVectorUnsafe().setSelSize(0);
-            nodeGroupScanState.nextRowToScan += numRowsToScan;
-            return NodeGroupScanResult{nodeGroupScanState.nextRowToScan, 0};
-        } else {
-            chunkedGroupToScan.scan(transaction, state, nodeGroupScanState, rowIdxInChunkToScan,
-                numRowsToScan);
-            auto& selVector = state.outState->getSelVectorUnsafe();
-            auto stat = selVector.getMutableBuffer();
-            uint64_t numSelectedValues = 0;
-            size_t i = 0, j = 0;
-            while (i < selVector.getSelSize() && j < arr.size()) {
-                auto temp = arr[j] - startNodeOffset;
-                if (selVector[i] < temp) {
-                    ++i;
-                } else if (selVector[i] > temp) {
-                    ++j;
-                } else {
-                    stat[numSelectedValues++] = temp;
-                    ++i;
-                    ++j;
-                }
-            }
-            selVector.setToFiltered(numSelectedValues);
-        }
-    } else {
-        chunkedGroupToScan.scan(transaction, state, nodeGroupScanState, rowIdxInChunkToScan,
+    auto chunkedGroup =
+        findChunkedGroupFromRowIdx(chunkedGroups.lock(), nodeGroupScanState.nextRowToScan);
+    if (chunkedGroup) {
+        auto index =
+            findChunkedGroupIdxFromRowIdx(chunkedGroups.lock(), nodeGroupScanState.nextRowToScan);
+        auto numRowsScannedInChunkedGroup =
+            nodeGroupScanState.nextRowToScan - chunkedGroup->getStartRowIdx();
+        auto numRowsToScan = std::min(chunkedGroup->getNumRows() - numRowsScannedInChunkedGroup,
+            DEFAULT_VECTOR_CAPACITY);
+        /*std::cout << "Chunked Group Index" << index << "Chunked group rows"
+                  << chunkedGroup->getNumRows()
+                  << " Next row to scan: " << nodeGroupScanState.nextRowToScan
+                  << " rows: " << numRowsToScan << std::endl;*/
+        return scan(transaction, state,
+            StorageUtils::getStartOffsetOfNodeGroup(nodeGroupIdx) +
+                nodeGroupScanState.nextRowToScan,
             numRowsToScan);
     }
-    const auto startRow = nodeGroupScanState.nextRowToScan;
-    nodeGroupScanState.nextRowToScan += numRowsToScan;
-    return NodeGroupScanResult{startRow, numRowsToScan};
+    return NODE_GROUP_SCAN_EMMPTY_RESULT;
 }
-
 NodeGroupScanResult NodeGroup::scan(Transaction* transaction, TableScanState& state,
     offset_t startOffset, offset_t numRowsToScan) const {
     bool enableSemiMask =
@@ -252,7 +213,6 @@ NodeGroupScanResult NodeGroup::scanInternal(const common::UniqLock& lock, Transa
     auto nodeGroupStartOffset = StorageUtils::getStartOffsetOfNodeGroup(nodeGroupIdx);
     KU_ASSERT(startOffset >= nodeGroupStartOffset);
     auto startOffsetInGroup = startOffset - nodeGroupStartOffset;
-    KU_ASSERT(startOffsetInGroup + numRowsToScan <= numRows);
 
     auto& nodeGroupScanState = *state.nodeGroupScanState;
     nodeGroupScanState.nextRowToScan = startOffsetInGroup;
@@ -287,7 +247,12 @@ NodeGroupScanResult NodeGroup::scanInternal(const common::UniqLock& lock, Transa
         nodeGroupScanState.nextRowToScan += numRowsToScanInChunk;
         if (numRowsScanned < numRowsToScan) {
             nodeGroupScanState.chunkedGroupIdx++;
-            chunkedGroupToScan = chunkedGroups.getGroup(lock, nodeGroupScanState.chunkedGroupIdx);
+            if (nodeGroupScanState.chunkedGroupIdx < chunkedGroups.getNumGroups(lock)) {
+                chunkedGroupToScan =
+                    chunkedGroups.getGroup(lock, nodeGroupScanState.chunkedGroupIdx);
+            } else {
+                break;
+            }
         }
     } while (numRowsScanned < numRowsToScan);
     if (numRowsScanned == 0) {
