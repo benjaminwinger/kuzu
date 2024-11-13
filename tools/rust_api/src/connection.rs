@@ -265,6 +265,7 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
         conn.query("CREATE (:Person {name: 'Alice', age: 25});")?;
 
         for result in conn.query("MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;")? {
+            let result = result?;
             assert_eq!(result.len(), 2);
             assert_eq!(result[0], Value::String("Alice".to_string()));
             assert_eq!(result[1], Value::Int16(25));
@@ -298,7 +299,7 @@ Invalid input <MATCH (a:Person RETURN>: expected rule oC_SingleQuery (line: 1, o
 
         // Implicit conversions also work
         let mut results = 0;
-        for (name, age) in conn.query_value::<(String, String)>(
+        for Ok((name, age)) in conn.query_value::<(String, String)>(
             "MATCH (a:Person) RETURN a.name AS NAME, a.age AS AGE;",
         )? {
             results += 1;

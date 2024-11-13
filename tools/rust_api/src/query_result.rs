@@ -256,8 +256,9 @@ impl<'db, T: TryFrom<KuzuRow>> QueryResult<'db, T> {
 }
 
 // the underlying C++ type is both data and an iterator (sort-of)
-impl<T: TryFrom<KuzuRow>> Iterator for QueryResult<'_, T> {
-    type Item = T;
+impl<E, T: TryFrom<KuzuRow, Error = E>> Iterator for QueryResult<'_, T> {
+    // TODO: Better error type
+    type Item = Result<T, E>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.result.as_ref().unwrap().hasNext() {
@@ -274,7 +275,11 @@ impl<T: TryFrom<KuzuRow>> Iterator for QueryResult<'_, T> {
             }
             // TODO: This is is ignoring conversion errors and terminating the iterator early if
             // the TryFrom fails
-            TryInto::<T>::try_into(KuzuRow(result)).ok()
+            // Since all rows should have the same type, we should ideally be able to handle most
+            // errors when the query result is constructed by asserting that the column types match
+            // T
+            // However conversion errors for individual rows also need to be handled.
+            Some(TryInto::<T>::try_into(KuzuRow(result)))
         } else {
             None
         }
