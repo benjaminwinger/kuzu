@@ -59,10 +59,7 @@ struct EvictionCandidate {
 class EvictionQueue {
 public:
     static constexpr auto EMPTY = EvictionCandidate{UINT32_MAX, common::INVALID_PAGE_IDX};
-    // TODO: Experiment with different sizes. EvictionCandidates are 8 bytes, so this should be at
-    // least 32 (I've heard of cache lines as large as 256B), but larger chunks might also be more
-    // efficient
-    static constexpr size_t BATCH_SIZE = 64;
+    static constexpr size_t BATCH_SIZE = 256;
     explicit EvictionQueue(uint64_t capacity)
         // Capacity needs to be a multiple of the batch size
         : insertCursor{0}, evictionCursor{0}, size{0},
@@ -276,7 +273,7 @@ private:
 
     uint64_t evictPages();
 
-private:
+public:
     std::atomic<uint64_t> bufferPoolSize;
     EvictionQueue evictionQueue;
     // Total memory used
