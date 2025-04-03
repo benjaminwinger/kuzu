@@ -278,7 +278,7 @@ private:
 
     uint64_t evictPages();
 
-private:
+public:
     std::atomic<uint64_t> bufferPoolSize;
     EvictionQueue evictionQueue;
     // Total memory used
