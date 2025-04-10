@@ -59,9 +59,11 @@ SimpleAggregateSharedState::SimpleAggregateSharedState(main::ClientContext* cont
                 auto hashTable = std::make_unique<AggregateHashTable>(*context->getMemoryManager(),
                     std::move(keyTypes), std::vector<LogicalType>{} /*payloadTypes*/,
                     std::vector<AggregateFunction>{}, std::vector<LogicalType>{}, 0, schema.copy());
-                auto queue = std::make_unique<HashTableQueue>(context->getMemoryManager(),
-                    AggregateHashTableUtils::getTableSchemaForKeys(std::vector<LogicalType>{},
-                        aggInfos[funcIdx].distinctAggKeyType));
+                auto queue = std::make_unique<HashTableQueue>(
+                    std::make_unique<AggregateFactorizedTable>(context->getMemoryManager(),
+                        AggregateHashTableUtils::getTableSchemaForKeys(std::vector<LogicalType>{},
+                            aggInfos[funcIdx].distinctAggKeyType),
+                        0, 0));
                 partition.distinctTables.emplace_back(Partition::DistinctData{std::move(hashTable),
                     std::move(queue), aggregateFunction.createInitialNullAggregateState()});
             }

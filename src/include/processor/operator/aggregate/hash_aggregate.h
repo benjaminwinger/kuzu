@@ -56,6 +56,9 @@ public:
             auto& partition =
                 globalPartitions[(hash >> shiftForPartitioning) % globalPartitions.size()];
             partition.queue->appendTuple(std::span(tuple, numBytesPerTuple));
+            // Clear tuple in original table so that the aggregate state doesn't get double-freed if
+            // a later append fails in this loop (the table gets cleared later)
+            memset(tuple, 0, factorizedTable.getTableSchema()->getNumBytesPerTuple());
         }
     }
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <numeric>
 
+#include "common/copy_constructors.h"
 #include "common/in_mem_overflow_buffer.h"
 #include "common/types/value/value.h"
 #include "common/vector/value_vector.h"
@@ -84,6 +85,7 @@ class KUZU_API FactorizedTable {
 
 public:
     FactorizedTable(storage::MemoryManager* memoryManager, FactorizedTableSchema tableSchema);
+    virtual ~FactorizedTable() = default;
 
     void append(const std::vector<common::ValueVector*>& vectors);
 
@@ -229,7 +231,7 @@ private:
     void readFlatCol(uint8_t** tuplesToRead, ft_col_idx_t colIdx, common::ValueVector& vector,
         uint64_t numTuplesToRead) const;
 
-private:
+protected:
     storage::MemoryManager* memoryManager;
     // Table Schema. Keeping track of factorization structure.
     FactorizedTableSchema tableSchema;

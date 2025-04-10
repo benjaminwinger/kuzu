@@ -13,6 +13,7 @@
 #include "common/utils.h"
 #include "common/vector/value_vector.h"
 #include "processor/operator/aggregate/aggregate_input.h"
+#include "processor/operator/aggregate/base_aggregate.h"
 #include "processor/result/factorized_table.h"
 #include "processor/result/factorized_table_schema.h"
 
@@ -63,15 +64,15 @@ hash_t getHash(const FactorizedTable& table, ft_tuple_idx_t tupleIdx) {
                                                      table.getTableSchema()->getNumColumns() - 1));
 }
 
-void AggregateHashTable::merge(FactorizedTable&& table) {
-    KU_ASSERT(*table.getTableSchema() == *getTableSchema());
-    resizeHashTableIfNecessary(table.getNumTuples());
+void AggregateHashTable::merge(std::unique_ptr<FactorizedTable> table) {
+    KU_ASSERT(*table->getTableSchema() == *getTableSchema());
+    resizeHashTableIfNecessary(table->getNumTuples());
 
     uint64_t startTupleIdx = 0;
-    while (startTupleIdx < table.getNumTuples()) {
+    while (startTupleIdx < table->getNumTuples()) {
         auto numTuplesToScan =
-            std::min(table.getNumTuples() - startTupleIdx, DEFAULT_VECTOR_CAPACITY);
-        findHashSlots(table, startTupleIdx, numTuplesToScan);
+            std::min(table->getNumTuples() - startTupleIdx, DEFAULT_VECTOR_CAPACITY);
+        findHashSlots(*table, startTupleIdx, numTuplesToScan);
         auto aggregateStateOffset = aggStateColOffsetInFT;
         for (auto& aggregateFunction : aggregateFunctions) {
             // We'll update the distinct state at the end.
@@ -82,13 +83,16 @@ void AggregateHashTable::merge(FactorizedTable&& table) {
                 for (auto i = 0u; i < numTuplesToScan; i++) {
                     aggregateFunction.combineState(hashSlotsToUpdateAggState[i]->entry +
                                                        aggregateStateOffset,
-                        table.getTuple(startTupleIdx + i) + aggregateStateOffset, memoryManager);
+                        table->getTuple(startTupleIdx + i) + aggregateStateOffset, memoryManager);
                 }
             }
             aggregateStateOffset += aggregateFunction.getAggregateStateSize();
         }
         startTupleIdx += numTuplesToScan;
     }
+    // Clear does not destroy AggregateState objects stored in the other table, which is good
+    // since they have been moved into this one and may point to the same auxiliary data
+    table->clear();
 }
 
 void AggregateHashTable::mergeDistinctAggregateInfo() {
@@ -196,7 +200,8 @@ void AggregateHashTable::initializeFT(const std::vector<AggregateFunction>& aggF
     }
     hashColIdxInFT = tableSchema.getNumColumns() - 1;
     hashColOffsetInFT = tableSchema.getColOffset(hashColIdxInFT);
-    factorizedTable = std::make_unique<FactorizedTable>(memoryManager, std::move(tableSchema));
+    factorizedTable = std::make_unique<AggregateFactorizedTable>(memoryManager,
+        std::move(tableSchema), aggStateColIdxInFT, aggregateFunctions.size());
 }
 
 void AggregateHashTable::initializeHashTable(uint64_t numEntriesToAllocate) {
