@@ -153,7 +153,7 @@ AggregateFactorizedTable::~AggregateFactorizedTable() {
                  colIdx < aggStateColIndex + numAggregateFunctions; colIdx++) {
                 auto state =
                     reinterpret_cast<AggregateState*>(tuple + tableSchema.getColOffset(colIdx));
-                if (!state->isNull) {
+                if (state->isValid) {
                     state->~AggregateState();
                 }
             }
