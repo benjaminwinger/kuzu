@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstring>
 
 template<size_t SIZE>
 inline void memCpyFixed(void* dest, const void* src) {
