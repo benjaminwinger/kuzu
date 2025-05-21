@@ -565,8 +565,6 @@ uint64_t ColumnChunkData::getEstimatedMemoryUsage() const {
 
 void ColumnChunkData::serialize(Serializer& serializer) const {
     KU_ASSERT(residencyState == ResidencyState::ON_DISK);
-    serializer.writeDebuggingInfo("data_type");
-    dataType.serialize(serializer);
     serializer.writeDebuggingInfo("metadata");
     metadata.serialize(serializer);
     serializer.writeDebuggingInfo("enable_compression");
@@ -602,9 +600,6 @@ std::unique_ptr<ColumnChunkData> ColumnChunkData::deserialize(MemoryManager& mem
     }
 
     switch (dataType.getPhysicalType()) {
-    case PhysicalTypeID::STRUCT: {
-        StructChunkData::deserialize(deSer, *chunkData);
-    } break;
     case PhysicalTypeID::STRING: {
         StringChunkData::deserialize(deSer, *chunkData);
     } break;
@@ -928,10 +923,6 @@ std::unique_ptr<ColumnChunkData> ColumnChunkFactory::createColumnChunkData(Memor
         return std::make_unique<ListChunkData>(mm, std::move(dataType), capacity, enableCompression,
             residencyState);
     }
-    case PhysicalTypeID::STRUCT: {
-        return std::make_unique<StructChunkData>(mm, std::move(dataType), capacity,
-            enableCompression, residencyState);
-    }
     default:
         KU_UNREACHABLE;
     }
@@ -970,10 +961,6 @@ std::unique_ptr<ColumnChunkData> ColumnChunkFactory::createColumnChunkData(Memor
     case PhysicalTypeID::ARRAY:
     case PhysicalTypeID::LIST: {
         return std::make_unique<ListChunkData>(mm, std::move(dataType), enableCompression,
-            metadata);
-    }
-    case PhysicalTypeID::STRUCT: {
-        return std::make_unique<StructChunkData>(mm, std::move(dataType), enableCompression,
             metadata);
     }
     default:

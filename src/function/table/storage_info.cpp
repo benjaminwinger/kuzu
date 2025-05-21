@@ -9,6 +9,7 @@
 #include "function/table/bind_input.h"
 #include "function/table/simple_table_function.h"
 #include "storage/storage_manager.h"
+#include "storage/store/column_chunk.h"
 #include "storage/store/list_chunk_data.h"
 #include "storage/store/list_column.h"
 #include "storage/store/node_table.h"
@@ -175,14 +176,6 @@ static void appendStorageInfoForChunkData(StorageInfoLocalState* localState, Dat
             *chunkData.getNullData());
     }
     switch (columnType.getPhysicalType()) {
-    case PhysicalTypeID::STRUCT: {
-        auto& structChunk = chunkData.cast<StructChunkData>();
-        auto numChildren = structChunk.getNumChildren();
-        for (auto i = 0u; i < numChildren; i++) {
-            appendStorageInfoForChunkData(localState, outputChunk, outputData,
-                structChunk.getChild(i));
-        }
-    } break;
     case PhysicalTypeID::STRING: {
         auto& stringChunk = chunkData.cast<StringChunkData>();
         auto& dictionaryChunk = stringChunk.getDictionaryChunk();
@@ -209,6 +202,23 @@ static void appendStorageInfoForChunkData(StorageInfoLocalState* localState, Dat
     }
 }
 
+static void appendStorageInfoForChunk(StorageInfoLocalState* localState, DataChunk& outputChunk,
+    StorageInfoOutputData& outputData, const ColumnChunk& columnChunk) {
+    // TODO: Any ColumnChunkMetadata that's separate from the SegmentMetadata
+    for (auto* segment : columnChunk.getSegments()) {
+        if (segment->getDataType().getPhysicalType() == PhysicalTypeID::STRUCT) {
+            auto& structChunk = segment->cast<StructChunk>();
+            auto numChildren = structChunk.getNumChildren();
+            for (auto i = 0u; i < numChildren; i++) {
+                appendStorageInfoForChunk(localState, outputChunk, outputData,
+                    *structChunk.getChild(i));
+            }
+        } else {
+            appendStorageInfoForChunkData(localState, outputChunk, outputData, *segment);
+        }
+    }
+}
+
 static void appendStorageInfoForChunkedGroup(StorageInfoLocalState* localState,
     DataChunk& outputChunk, StorageInfoOutputData& outputData, ChunkedNodeGroup* chunkedGroup) {
     auto numColumns = chunkedGroup->getNumColumns();
@@ -216,9 +226,8 @@ static void appendStorageInfoForChunkedGroup(StorageInfoLocalState* localState,
     // TODO(bmwinger): probably should make this aware of how segments work
     for (auto i = 0u; i < numColumns; i++) {
         resetOutputIfNecessary(localState, outputChunk);
-        for (auto* segment : chunkedGroup->getColumnChunk(i).getSegments()) {
-            appendStorageInfoForChunkData(localState, outputChunk, outputData, *segment);
-        }
+        appendStorageInfoForChunk(localState, outputChunk, outputData,
+            chunkedGroup->getColumnChunk(i));
     }
     if (chunkedGroup->getFormat() == NodeGroupDataFormat::CSR) {
         auto& chunkedCSRGroup = chunkedGroup->cast<ChunkedCSRNodeGroup>();

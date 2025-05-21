@@ -51,27 +51,33 @@ struct ColumnCheckpointState {
 
 class ColumnChunk {
 public:
+    // Construct a ColumnChunk containing one segment of the given capacity
     ColumnChunk(MemoryManager& memoryManager, common::LogicalType&& dataType, uint64_t capacity,
         bool enableCompression, ResidencyState residencyState, bool initializeToZero = true);
+    // Construct a ColumnChunk containing no segments
+    ColumnChunk(common::LogicalType&& dataType, bool enableCompression,
+        ResidencyState residencyState);
     ColumnChunk(MemoryManager& memoryManager, common::LogicalType&& dataType,
         bool enableCompression, ColumnChunkMetadata metadata);
     ColumnChunk(bool enableCompression, std::unique_ptr<ColumnChunkData> data);
     ColumnChunk(bool enableCompression, std::vector<std::unique_ptr<ColumnChunkData>> segments);
 
-    void initializeScanState(ChunkState& state, const Column* column) const;
-    void scan(const transaction::Transaction* transaction, const ChunkState& state,
+    virtual ~ColumnChunk() = default;
+
+    virtual void initializeScanState(ChunkState& state, const Column* column) const;
+    virtual void scan(const transaction::Transaction* transaction, const ChunkState& state,
         common::ValueVector& output, common::offset_t offsetInChunk, common::length_t length) const;
     template<ResidencyState SCAN_RESIDENCY_STATE>
     void scanCommitted(const transaction::Transaction* transaction, ChunkState& chunkState,
         ColumnChunkData& output, common::row_idx_t startRow = 0,
         common::row_idx_t numRows = common::INVALID_ROW_IDX) const;
-    void lookup(const transaction::Transaction* transaction, const ChunkState& state,
+    virtual void lookup(const transaction::Transaction* transaction, const ChunkState& state,
         common::offset_t rowInChunk, common::ValueVector& output,
         common::sel_t posInOutputVector) const;
     void update(const transaction::Transaction* transaction, common::offset_t offsetInChunk,
         const common::ValueVector& values);
 
-    uint64_t getEstimatedMemoryUsage() const {
+    virtual uint64_t getEstimatedMemoryUsage() const {
         if (getResidencyState() == ResidencyState::ON_DISK) {
             return 0;
         }
@@ -81,11 +87,11 @@ public:
         }
         return memUsage;
     }
-    void serialize(common::Serializer& serializer) const;
+    virtual void serialize(common::Serializer& serializer) const;
     static std::unique_ptr<ColumnChunk> deserialize(MemoryManager& memoryManager,
         common::Deserializer& deSer);
 
-    uint64_t getNumValues() const {
+    virtual uint64_t getNumValues() const {
         uint64_t numValues = 0;
         for (const auto& chunk : data) {
             numValues += chunk->getNumValues();
@@ -99,7 +105,7 @@ public:
         }
         return capacity;
     }
-    void setNumValues(const uint64_t numValues) const {
+    virtual void setNumValues(uint64_t numValues) {
         // TODO(bmwinger): Not sure how to handle this. Probably rework the caller
         // Only used for rollbackInsert with an argument of 0. Not sure what the best behaviour
         // would be there; should we clear all but one and set that to 0? or set them all to 0?
@@ -148,12 +154,13 @@ public:
     MergedColumnChunkStats getMergedColumnChunkStats(
         const transaction::Transaction* transaction) const;
 
-    void reclaimStorage(FileHandle& dataFH);
+    virtual void reclaimStorage(FileHandle& dataFH);
 
-    void append(common::ValueVector* vector, const common::SelectionView& selView);
-    void append(const ColumnChunk* other, common::offset_t startPosInOtherChunk,
+    virtual void append(common::ValueVector* vector, const common::SelectionView& selView);
+    virtual void append(const ColumnChunk* other, common::offset_t startPosInOtherChunk,
         uint32_t numValuesToAppend);
 
+    // TODO(bmwinger): Remove. This won't work for nested types
     void append(const ColumnChunkData* other, common::offset_t startPosInOtherChunk,
         uint32_t numValuesToAppend);
 
@@ -228,13 +235,13 @@ public:
         KU_UNREACHABLE;
     }
 
-    void flush(FileHandle& dataFH) {
+    virtual void flush(FileHandle& dataFH) {
         for (auto& segment : data) {
             segment->flush(dataFH);
         }
     }
 
-    std::unique_ptr<ColumnChunk> flushAsNewColumnChunk(FileHandle& dataFH) const;
+    virtual std::unique_ptr<ColumnChunk> flushAsNewColumnChunk(FileHandle& dataFH) const;
 
     void populateWithDefaultVal(evaluator::ExpressionEvaluator& defaultEvaluator,
         uint64_t& numValues_, ColumnStats* newColumnStats) {
@@ -242,7 +249,7 @@ public:
         data.back()->populateWithDefaultVal(defaultEvaluator, numValues_, newColumnStats);
     }
 
-    void finalize() {
+    virtual void finalize() {
         for (auto& segment : data) {
             segment->finalize();
         }
@@ -260,12 +267,15 @@ public:
         return segments;
     }
 
-    void checkpoint(Column& column, std::vector<ChunkCheckpointState>&& chunkCheckpointStates);
+    virtual void checkpoint(Column& column,
+        std::vector<ChunkCheckpointState>&& chunkCheckpointStates);
 
-    void write(Column& column, ChunkState& state, common::offset_t dstOffset,
+    // TODO(bmwinger): this may not work for nested types since ColumnChunkData don't contain the
+    // relevant nested data
+    virtual void write(Column& column, ChunkState& state, common::offset_t dstOffset,
         const ColumnChunkData& dataToWrite, common::offset_t srcOffset, common::length_t numValues);
 
-    void syncNumValues() {
+    virtual void syncNumValues() {
         for (auto& segment : data) {
             segment->syncNumValues();
         }
@@ -295,11 +305,12 @@ private:
         }
     }
 
-private:
+protected:
     // TODO(Guodong): This field should be removed. Ideally it shouldn't be cached anywhere in
     // storage structures, instead should be fed into functions needed from ClientContext dbConfig.
     bool enableCompression;
     std::vector<std::unique_ptr<ColumnChunkData>> data;
+    common::LogicalType dataType;
     // Update versions.
     std::unique_ptr<UpdateInfo> updateInfo;
 };

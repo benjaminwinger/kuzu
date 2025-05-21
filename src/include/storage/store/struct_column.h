@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/assert.h"
 #include "storage/store/column.h"
 
 namespace kuzu {
@@ -14,9 +15,10 @@ public:
     static std::unique_ptr<ColumnChunkData> flushChunkData(const ColumnChunkData& chunk,
         FileHandle& dataFH);
 
-    void scan(const transaction::Transaction* transaction, const ChunkState& state,
-        ColumnChunkData* columnChunk, common::offset_t startOffset = 0,
-        common::offset_t endOffset = common::INVALID_OFFSET) const override;
+    void scan(const transaction::Transaction*, const ChunkState&, ColumnChunkData*,
+        common::offset_t = 0, common::offset_t = common::INVALID_OFFSET) const override {
+        KU_UNREACHABLE;
+    }
     void scan(const transaction::Transaction* transaction, const ChunkState& state,
         common::offset_t startOffsetInGroup, common::offset_t endOffsetInGroup,
         common::ValueVector* resultVector, uint64_t offsetInVector) const override;
@@ -25,11 +27,6 @@ public:
         KU_ASSERT(childIdx < childColumns.size());
         return childColumns[childIdx].get();
     }
-    void write(ColumnChunkData& persistentChunk, ChunkState& state, common::offset_t offsetInChunk,
-        const ColumnChunkData& data, common::offset_t dataOffset,
-        common::length_t numValues) const override;
-
-    void checkpointSegment(ColumnCheckpointState&& checkpointState) const override;
 
 protected:
     void scanInternal(transaction::Transaction* transaction, const ChunkState& state,

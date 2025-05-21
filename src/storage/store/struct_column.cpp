@@ -27,29 +27,6 @@ StructColumn::StructColumn(std::string name, LogicalType dataType, FileHandle* d
     }
 }
 
-std::unique_ptr<ColumnChunkData> StructColumn::flushChunkData(const ColumnChunkData& chunk,
-    FileHandle& dataFH) {
-    auto flushedChunk = flushNonNestedChunkData(chunk, dataFH);
-    auto& structChunk = chunk.cast<StructChunkData>();
-    auto& flushedStructChunk = flushedChunk->cast<StructChunkData>();
-    for (auto i = 0u; i < structChunk.getNumChildren(); i++) {
-        auto flushedChildChunk = Column::flushChunkData(structChunk.getChild(i), dataFH);
-        flushedStructChunk.setChild(i, std::move(flushedChildChunk));
-    }
-    return flushedChunk;
-}
-
-void StructColumn::scan(const Transaction* transaction, const ChunkState& state,
-    ColumnChunkData* columnChunk, offset_t startOffset, offset_t endOffset) const {
-    KU_ASSERT(columnChunk->getDataType().getPhysicalType() == PhysicalTypeID::STRUCT);
-    Column::scan(transaction, state, columnChunk, startOffset, endOffset);
-    auto& structColumnChunk = columnChunk->cast<StructChunkData>();
-    for (auto i = 0u; i < childColumns.size(); i++) {
-        childColumns[i]->scan(transaction, state.childrenStates[i], structColumnChunk.getChild(i),
-            startOffset, endOffset);
-    }
-}
-
 void StructColumn::scan(const Transaction* transaction, const ChunkState& state,
     offset_t startOffsetInGroup, offset_t endOffsetInGroup, ValueVector* resultVector,
     uint64_t offsetInVector) const {
@@ -78,38 +55,6 @@ void StructColumn::lookupInternal(const Transaction* transaction, const ChunkSta
         childColumns[i]->lookupValue(transaction, state.childrenStates[i], nodeOffset, fieldVector,
             posInVector);
     }
-}
-
-void StructColumn::write(ColumnChunkData& persistentChunk, ChunkState& state,
-    offset_t offsetInChunk, const ColumnChunkData& data, offset_t dataOffset,
-    length_t numValues) const {
-    KU_ASSERT(data.getDataType().getPhysicalType() == PhysicalTypeID::STRUCT);
-    nullColumn->write(*persistentChunk.getNullData(), *state.nullState, offsetInChunk,
-        *data.getNullData(), dataOffset, numValues);
-    auto& structData = data.cast<StructChunkData>();
-    auto& persistentStructChunk = persistentChunk.cast<StructChunkData>();
-    for (auto i = 0u; i < childColumns.size(); i++) {
-        const auto& childData = structData.getChild(i);
-        childColumns[i]->write(*persistentStructChunk.getChild(i), state.childrenStates[i],
-            offsetInChunk, childData, dataOffset, numValues);
-    }
-}
-
-void StructColumn::checkpointSegment(ColumnCheckpointState&& checkpointState) const {
-    auto& persistentStructChunk = checkpointState.persistentData.cast<StructChunkData>();
-    for (auto i = 0u; i < childColumns.size(); i++) {
-        std::vector<SegmentCheckpointState> childSegmentCheckpointStates;
-        for (const auto& segmentCheckpointState : checkpointState.segmentCheckpointStates) {
-            childSegmentCheckpointStates.emplace_back(
-                segmentCheckpointState.chunkData.cast<StructChunkData>().getChild(i),
-                segmentCheckpointState.startRowInData, segmentCheckpointState.offsetInSegment,
-                segmentCheckpointState.numRows);
-        }
-        childColumns[i]->checkpointSegment(ColumnCheckpointState(*persistentStructChunk.getChild(i),
-            std::move(childSegmentCheckpointStates)));
-    }
-    Column::checkpointNullData(checkpointState);
-    persistentStructChunk.syncNumValues();
 }
 
 } // namespace storage

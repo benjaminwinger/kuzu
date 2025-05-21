@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <stdexcept>
 
 #include "common/serializer/deserializer.h"
 #include "common/vector/value_vector.h"
@@ -21,9 +20,16 @@ namespace storage {
 
 ColumnChunk::ColumnChunk(MemoryManager& memoryManager, LogicalType&& dataType, uint64_t capacity,
     bool enableCompression, ResidencyState residencyState, bool initializeToZero)
-    : enableCompression{enableCompression} {
-    data.push_back(ColumnChunkFactory::createColumnChunkData(memoryManager, std::move(dataType),
+    : enableCompression{enableCompression}, dataType{std::move(dataType)} {
+    // TODO: StructChunk shouldn't have any direct segments
+    data.push_back(ColumnChunkFactory::createColumnChunkData(memoryManager, dataType.copy(),
         enableCompression, capacity, residencyState, true, initializeToZero));
+    KU_ASSERT(residencyState != ResidencyState::ON_DISK);
+}
+
+ColumnChunk::ColumnChunk(LogicalType&& dataType, bool enableCompression,
+    ResidencyState residencyState)
+    : enableCompression{enableCompression}, dataType{std::move(dataType)} {
     KU_ASSERT(residencyState != ResidencyState::ON_DISK);
 }
 
@@ -227,8 +233,9 @@ void ColumnChunk::update(const Transaction* transaction, offset_t offsetInChunk,
     }
     const auto vectorIdx = offsetInChunk / DEFAULT_VECTOR_CAPACITY;
     const auto rowIdxInVector = offsetInChunk % DEFAULT_VECTOR_CAPACITY;
-    const auto vectorUpdateInfo = updateInfo->update(data.front()->getMemoryManager(), transaction,
-        vectorIdx, rowIdxInVector, values);
+    const auto vectorUpdateInfo =
+        updateInfo->update(*transaction->getClientContext()->getMemoryManager(), transaction,
+            vectorIdx, rowIdxInVector, values);
     transaction->pushVectorUpdateInfo(*updateInfo, vectorIdx, *vectorUpdateInfo);
 }
 
@@ -256,6 +263,8 @@ MergedColumnChunkStats ColumnChunk::getMergedColumnChunkStats(
 void ColumnChunk::serialize(Serializer& serializer) const {
     serializer.writeDebuggingInfo("enable_compression");
     serializer.write<bool>(enableCompression);
+    serializer.writeDebuggingInfo("data_type");
+    dataType.serialize(serializer);
     serializer.write<uint64_t>(data.size());
     for (auto& segment : data) {
         segment->serialize(serializer);

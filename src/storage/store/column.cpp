@@ -146,9 +146,6 @@ void Column::populateExtraChunkState(ChunkState& state) const {
 std::unique_ptr<ColumnChunkData> Column::flushChunkData(const ColumnChunkData& chunkData,
     FileHandle& dataFH) {
     switch (chunkData.getDataType().getPhysicalType()) {
-    case PhysicalTypeID::STRUCT: {
-        return StructColumn::flushChunkData(chunkData, dataFH);
-    }
     case PhysicalTypeID::STRING: {
         return StringColumn::flushChunkData(chunkData, dataFH);
     }

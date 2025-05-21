@@ -1,150 +1,136 @@
 #include "storage/store/struct_chunk_data.h"
 
+#include "common/cast.h"
+#include "common/copy_constructors.h"
 #include "common/data_chunk/sel_vector.h"
 #include "common/serializer/deserializer.h"
 #include "common/serializer/serializer.h"
 #include "common/types/types.h"
 #include "common/vector/value_vector.h"
 #include "storage/buffer_manager/memory_manager.h"
+#include "storage/store/column.h"
+#include "storage/store/column_chunk.h"
 #include "storage/store/column_chunk_data.h"
 #include "storage/store/struct_column.h"
 
 using namespace kuzu::common;
 
 namespace kuzu {
+using transaction::Transaction;
 namespace storage {
 
-StructChunkData::StructChunkData(MemoryManager& mm, LogicalType dataType, uint64_t capacity,
+StructChunk::StructChunk(MemoryManager& mm, LogicalType dataType, uint64_t capacity,
     bool enableCompression, ResidencyState residencyState)
-    : ColumnChunkData{mm, std::move(dataType), capacity, enableCompression, residencyState,
-          true /*hasNullData*/} {
+    : ColumnChunk{std::move(dataType), enableCompression, residencyState} {
     const auto fieldTypes = StructType::getFieldTypes(this->dataType);
     childChunks.resize(fieldTypes.size());
     for (auto i = 0u; i < fieldTypes.size(); i++) {
-        childChunks[i] = ColumnChunkFactory::createColumnChunkData(mm, fieldTypes[i]->copy(),
-            enableCompression, capacity, residencyState);
+        childChunks[i] = std::make_unique<ColumnChunk>(mm, fieldTypes[i]->copy(), capacity,
+            enableCompression, residencyState);
     }
 }
 
-StructChunkData::StructChunkData(MemoryManager& mm, LogicalType dataType, bool enableCompression,
+StructChunk::StructChunk(MemoryManager& mm, LogicalType dataType, bool enableCompression,
     const ColumnChunkMetadata& metadata)
-    : ColumnChunkData{mm, std::move(dataType), enableCompression, metadata, true /*hasNullData*/} {
+    : ColumnChunk{mm, std::move(dataType), enableCompression, metadata} {
     const auto fieldTypes = StructType::getFieldTypes(this->dataType);
     childChunks.resize(fieldTypes.size());
     for (auto i = 0u; i < fieldTypes.size(); i++) {
-        childChunks[i] = ColumnChunkFactory::createColumnChunkData(mm, fieldTypes[i]->copy(),
-            enableCompression, 0, ResidencyState::IN_MEMORY);
+        childChunks[i] = std::make_unique<ColumnChunk>(mm, fieldTypes[i]->copy(), 0,
+            enableCompression, ResidencyState::IN_MEMORY);
     }
 }
 
-void StructChunkData::finalize() {
+void StructChunk::finalize() {
     for (const auto& childChunk : childChunks) {
         childChunk->finalize();
     }
 }
 
-uint64_t StructChunkData::getEstimatedMemoryUsage() const {
-    auto estimatedMemoryUsage = ColumnChunkData::getEstimatedMemoryUsage();
+uint64_t StructChunk::getEstimatedMemoryUsage() const {
+    auto estimatedMemoryUsage = ColumnChunk::getEstimatedMemoryUsage();
     for (auto& childChunk : childChunks) {
         estimatedMemoryUsage += childChunk->getEstimatedMemoryUsage();
     }
     return estimatedMemoryUsage;
 }
 
-void StructChunkData::resetNumValuesFromMetadata() {
-    ColumnChunkData::resetNumValuesFromMetadata();
-    for (const auto& childChunk : childChunks) {
-        childChunk->resetNumValuesFromMetadata();
-    }
-}
-
-void StructChunkData::resetToAllNull() {
-    ColumnChunkData::resetToAllNull();
-    for (const auto& childChunk : childChunks) {
-        childChunk->resetToAllNull();
-    }
-}
-
-void StructChunkData::serialize(Serializer& serializer) const {
-    ColumnChunkData::serialize(serializer);
+void StructChunk::serialize(Serializer& serializer) const {
+    ColumnChunk::serialize(serializer);
     serializer.writeDebuggingInfo("struct_children");
-    serializer.serializeVectorOfPtrs<ColumnChunkData>(childChunks);
+    serializer.serializeVectorOfPtrs<ColumnChunk>(childChunks);
 }
 
-void StructChunkData::deserialize(Deserializer& deSer, ColumnChunkData& chunkData) {
+void StructChunk::deserialize(Deserializer& deSer, ColumnChunkData& chunkData) {
     std::string key;
     deSer.validateDebuggingInfo(key, "struct_children");
-    deSer.deserializeVectorOfPtrs<ColumnChunkData>(chunkData.cast<StructChunkData>().childChunks,
+    deSer.deserializeVectorOfPtrs<ColumnChunk>(chunkData.cast<StructChunk>().childChunks,
         [&](Deserializer& deser) {
-            return ColumnChunkData::deserialize(chunkData.getMemoryManager(), deser);
+            return ColumnChunk::deserialize(chunkData.getMemoryManager(), deser);
         });
 }
 
-void StructChunkData::flush(FileHandle& dataFH) {
-    ColumnChunkData::flush(dataFH);
+void StructChunk::flush(FileHandle& dataFH) {
+    ColumnChunk::flush(dataFH);
     for (const auto& childChunk : childChunks) {
         childChunk->flush(dataFH);
     }
 }
 
-void StructChunkData::reclaimStorage(FileHandle& dataFH) {
-    ColumnChunkData::reclaimStorage(dataFH);
+void StructChunk::reclaimStorage(FileHandle& dataFH) {
+    ColumnChunk::reclaimStorage(dataFH);
     for (const auto& childChunk : childChunks) {
         childChunk->reclaimStorage(dataFH);
     }
 }
 
-void StructChunkData::append(const ColumnChunkData* other, offset_t startPosInOtherChunk,
+void StructChunk::append(const ColumnChunk* other, offset_t startPosInOtherChunk,
     uint32_t numValuesToAppend) {
     KU_ASSERT(other->getDataType().getPhysicalType() == PhysicalTypeID::STRUCT);
-    const auto& otherStructChunk = other->cast<StructChunkData>();
-    KU_ASSERT(childChunks.size() == otherStructChunk.childChunks.size());
-    nullData->append(other->getNullData(), startPosInOtherChunk, numValuesToAppend);
+    const auto& otherStructChunk = ku_dynamic_cast<const StructChunk*>(other);
+    KU_ASSERT(childChunks.size() == otherStructChunk->childChunks.size());
+    // nullData->append(other->getNullData(), startPosInOtherChunk, numValuesToAppend);
     for (auto i = 0u; i < childChunks.size(); i++) {
-        childChunks[i]->append(otherStructChunk.childChunks[i].get(), startPosInOtherChunk,
+        childChunks[i]->append(otherStructChunk->childChunks[i].get(), startPosInOtherChunk,
             numValuesToAppend);
     }
-    numValues += numValuesToAppend;
 }
 
-void StructChunkData::append(ValueVector* vector, const SelectionView& selView) {
+void StructChunk::append(ValueVector* vector, const SelectionView& selView) {
     const auto numFields = StructType::getNumFields(dataType);
     for (auto i = 0u; i < numFields; i++) {
         childChunks[i]->append(StructVector::getFieldVector(vector, i).get(), selView);
     }
+    /*
     for (auto i = 0u; i < selView.getSelSize(); i++) {
         nullData->setNull(numValues + i, vector->isNull(selView[i]));
     }
-    numValues += selView.getSelSize();
+    */
 }
 
-void StructChunkData::scan(ValueVector& output, offset_t offset, length_t length,
-    sel_t posInOutputVector) const {
-    KU_ASSERT(offset + length <= numValues);
-    if (nullData) {
-        nullData->scan(output, offset, length, posInOutputVector);
-    }
+void StructChunk::scan(const Transaction* transaction, const ChunkState& state, ValueVector& output,
+    offset_t offsetInChunk, length_t length) const {
     const auto numFields = StructType::getNumFields(dataType);
     for (auto i = 0u; i < numFields; i++) {
-        childChunks[i]->scan(*StructVector::getFieldVector(&output, i), offset, length,
-            posInOutputVector);
+        childChunks[i]->scan(transaction, state.getChildState(i),
+            *StructVector::getFieldVector(&output, i), offsetInChunk, length);
     }
 }
 
-void StructChunkData::lookup(offset_t offsetInChunk, ValueVector& output,
-    sel_t posInOutputVector) const {
-    KU_ASSERT(offsetInChunk < numValues);
+void StructChunk::lookup(const Transaction* transaction, const ChunkState& state,
+    common::offset_t rowInChunk, common::ValueVector& output,
+    common::sel_t posInOutputVector) const {
     const auto numFields = StructType::getNumFields(dataType);
-    output.setNull(posInOutputVector, nullData->isNull(offsetInChunk));
+    // TODO: nulls
+    // output.setNull(posInOutputVector, nullData->isNull(offsetInChunk));
     for (auto i = 0u; i < numFields; i++) {
-        childChunks[i]->lookup(offsetInChunk, *StructVector::getFieldVector(&output, i).get(),
-            posInOutputVector);
+        childChunks[i]->lookup(transaction, state, rowInChunk,
+            *StructVector::getFieldVector(&output, i).get(), posInOutputVector);
     }
 }
 
-void StructChunkData::initializeScanState(ChunkState& state, const Column* column) const {
-    ColumnChunkData::initializeScanState(state, column);
-
+void StructChunk::initializeScanState(ChunkState& state, const Column* column) const {
+    ColumnChunk::initializeScanState(state, column);
     auto* structColumn = ku_dynamic_cast<const StructColumn*>(column);
     state.childrenStates.resize(childChunks.size());
     for (auto i = 0u; i < childChunks.size(); i++) {
@@ -152,35 +138,7 @@ void StructChunkData::initializeScanState(ChunkState& state, const Column* colum
     }
 }
 
-void StructChunkData::setToInMemory() {
-    ColumnChunkData::setToInMemory();
-    for (const auto& child : childChunks) {
-        child->setToInMemory();
-    }
-}
-
-void StructChunkData::resize(uint64_t newCapacity) {
-    ColumnChunkData::resize(newCapacity);
-    capacity = newCapacity;
-    for (const auto& child : childChunks) {
-        child->resize(newCapacity);
-    }
-}
-
-void StructChunkData::resizeWithoutPreserve(uint64_t newCapacity) {
-    ColumnChunkData::resizeWithoutPreserve(newCapacity);
-    capacity = newCapacity;
-    for (const auto& child : childChunks) {
-        child->resizeWithoutPreserve(newCapacity);
-    }
-}
-
-void StructChunkData::resetToEmpty() {
-    ColumnChunkData::resetToEmpty();
-    for (const auto& child : childChunks) {
-        child->resetToEmpty();
-    }
-}
+/*
 
 void StructChunkData::write(const ValueVector* vector, offset_t offsetInVector,
     offset_t offsetInChunk) {
@@ -225,17 +183,28 @@ void StructChunkData::write(const ColumnChunkData* srcChunk, offset_t srcOffsetI
             dstOffsetInChunk, numValuesToCopy);
     }
 }
+*/
 
-bool StructChunkData::numValuesSanityCheck() const {
+StructChunk::StructChunk(bool enableCompression, std::vector<std::unique_ptr<ColumnChunk>> children)
+    : ColumnChunk(enableCompression, std::vector<std::unique_ptr<ColumnChunkData>>{}),
+      childChunks{std::move(children)} {}
+
+std::unique_ptr<ColumnChunk> StructChunk::flushAsNewColumnChunk(FileHandle& dataFH) const {
+    std::vector<std::unique_ptr<ColumnChunk>> children;
     for (auto& child : childChunks) {
-        if (child->getNumValues() != numValues) {
-            return false;
-        }
-        if (!child->numValuesSanityCheck()) {
-            return false;
-        }
+        children.push_back(child->flushAsNewColumnChunk(dataFH));
     }
-    return nullData->getNumValues() == numValues;
+    return std::make_unique<StructChunk>(isCompressionEnabled(), std::move(children));
+}
+
+void StructChunk::checkpoint(Column& column,
+    std::vector<ChunkCheckpointState>&& chunkCheckpointStates) {
+
+    auto& structColumn = column.cast<StructColumn>();
+    for (size_t i = 0; i < childChunks.size(); i++) {
+        // TODO(bmwinger): The checkpoint state needs to be able to store the child columns
+        // childChunks[i]->checkpoint(*structColumn.getChild(i), chunkCheckpointStates);
+    }
 }
 
 } // namespace storage
